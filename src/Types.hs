@@ -53,7 +53,42 @@ data Expr a
   | Join (Expr a) (Expr a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
+pattern Push :: Expr a -> Expr a
+pattern Push f = Fork f (Prim Id)
+
+pattern Index :: Int -> Expr a
+pattern Index n <- (countNs -> Just n)
+  where Index n = foldr AndThen (Prim Proj1) $ replicate n $ Prim Proj2
+
+pattern (:.) :: Expr a -> Expr a -> Expr a
+pattern (:.)f g <- (split -> (f, g))
+  where
+    (:.) f (Prim Id) = f
+    (:.) (Prim Id) f = f
+    (:.) f g = AndThen f g
+infixr 0 :.
+
+split :: Expr a -> (Expr a, Expr a)
+split (AndThen (AndThen f g) h) = fmap (flip AndThen $ AndThen g h) $ split f
+split (AndThen f g) = (f, g)
+split x = (x, Prim Id)
+
+countNs :: Expr a -> Maybe Int
+countNs (Prim Proj2 :. e) = fmap (+ 1) $ countNs e
+countNs (Prim Proj1) = Just 0
+countNs _ = Nothing
+
 instance Pretty a => Pretty (Expr a) where
+  pPrintPrec l p (Index n) =
+    maybeParens (p >= 10) $
+      "idx" <+> pPrintPrec l p n
+  pPrintPrec l p (Push f :. Prim Dist :. k) =
+    maybeParens (p >= 3) $
+      ("branch" <+> pPrintPrec l 10 f) <+> "⨟" <+> pPrintPrec l 2 k
+  pPrintPrec l p (Push f) =
+    maybeParens (p >= 10) $
+      "push" <+> pPrintPrec l 10 f
+
   pPrintPrec l p (Var a) = pPrintPrec l p a
   pPrintPrec l p (Prim pr) = pPrintPrec l p pr
   pPrintPrec l p (Lit pr) = pPrintPrec l p pr
@@ -66,10 +101,10 @@ instance Pretty a => Pretty (Expr a) where
       pPrintPrec l 2 f <+> "⨟" <+> pPrintPrec l 2 g
   pPrintPrec l p (Fork f g) =
     maybeParens (p >= 4) $
-      pPrintPrec l 3 f <+> "▵" <+> pPrintPrec l 3 g
+      pPrintPrec l 4 f <+> "△" <+> pPrintPrec l 4 g
   pPrintPrec l p (Join f g) =
     maybeParens (p >= 5) $
-      pPrintPrec l 4 f <+> "▿" <+> pPrintPrec l 4 g
+      pPrintPrec l 5 f <+> "▽" <+> pPrintPrec l 5 g
 
 instance IsString a => IsString (Expr a) where
   fromString s =
@@ -317,18 +352,6 @@ quotient = cata \case
   AndThenF (Fork f _) (Prim Proj1 :. k) -> f :. k
   AndThenF (Fork _ g) (Prim Proj2 :. k) -> g :. k
   x -> embed x
-
-pattern (:.) :: Expr a -> Expr a -> Expr a
-pattern (:.)f g <- (split -> (f, g))
-  where
-    (:.) f (Prim Id) = f
-    (:.) (Prim Id) f = f
-    (:.) f g = AndThen f g
-
-split :: Expr a -> (Expr a, Expr a)
-split (AndThen (AndThen f g) h) = fmap (flip AndThen $ AndThen g h) $ split f
-split (AndThen f g) = (f, g)
-split x = (x, Prim Id)
 
 
 -- | Run the action but don't touch the allocation state
