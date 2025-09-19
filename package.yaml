@@ -5,6 +5,7 @@ license:             BSD-3-Clause
 author:              "Sandy Maguire"
 maintainer:          "example@example.com"
 copyright:           "2025 Sandy Maguire"
+language: GHC2021
 
 extra-source-files:
 - README.md
@@ -25,6 +26,13 @@ dependencies:
 - recursion-schemes
 - transformers
 - mtl
+- syb
+
+default-extensions:
+- DerivingStrategies
+- DerivingVia
+- TypeFamilies
+
 
 ghc-options:
 - -Wall
