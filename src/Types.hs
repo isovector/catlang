@@ -161,7 +161,7 @@ program :: [Stmt String]
 program =
   [ Bind "x" "proj1" ["in"]
   , Bind "y" "proj2" ["in"]
-  -- , Bind "z" "id" ["x"]
+  , Bind "z" "id" ["in"]
   , Run "id" ["y", "x"]
   ]
 
@@ -191,25 +191,42 @@ alloc v e = AllocM $ do
 lookup :: Ord v => v -> AllocM v (Expr v)
 lookup v = AllocM $ gets (M.! v)
 
-compileStmt :: Ord v => Stmt v -> AllocM v (Expr v)
-compileStmt (Bind v e xs) = do
+compileStmt
+  :: Ord v
+  => Set v
+  -- ^ binders which need to be allocated, rather than just inlined
+  -> Stmt v -> AllocM v (Expr v)
+compileStmt allocs (Bind v e xs) = do
   xs' <- traverse lookup xs
   let args = foldr1 Fork xs'
-  alloc v (AndThen args e)
+  let e' = AndThen args e
+  case S.member v allocs of
+    True -> do
+      alloc v e'
+    False -> do
+      AllocM $ modify $ M.insert v e'
   lookup v
-compileStmt (Run e xs) = do
+
+
+compileStmt _ (Run e xs) = do
   xs' <- traverse lookup xs
   let args = foldr1 Fork xs'
   pure $ AndThen args e
 
+useCount :: Ord a => Stmt a -> Map a Int
+useCount (Bind _ _ x) = M.fromListWith (+) $ fmap (, 1) x
+useCount (Run _ x) = M.fromListWith (+) $ fmap (, 1) x
+
 desugar :: [Stmt String] -> Expr String
 desugar ss =
-  let (out, binds)
+  let counts = M.unionsWith (+) $ fmap useCount ss
+      needs_alloc = M.keysSet $ M.filter (> 1) counts
+      (out, binds)
         = runWriter
         $ flip evalStateT (M.singleton "in" "id")
         $ unAllocM
         $ foldr1 (*>)
-        $ fmap compileStmt ss
+        $ fmap (compileStmt needs_alloc) ss
   in quotient $ foldr AndThen out binds
 
 quotient :: Expr a -> Expr a
