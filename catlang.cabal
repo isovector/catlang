@@ -25,6 +25,7 @@ source-repository head
 
 library
   exposed-modules:
+      Eval
       Types
   other-modules:
       Paths_catlang
@@ -36,6 +37,9 @@ library
       DerivingStrategies
       DerivingVia
       TypeFamilies
+      LambdaCase
+      ViewPatterns
+      PatternSynonyms
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints
   build-depends:
       base >=4.7 && <5
@@ -60,6 +64,9 @@ test-suite catlang-test
       DerivingStrategies
       DerivingVia
       TypeFamilies
+      LambdaCase
+      ViewPatterns
+      PatternSynonyms
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5

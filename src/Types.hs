@@ -1,47 +1,39 @@
 {-# LANGUAGE BlockArguments    #-}
-{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms   #-}
 {-# LANGUAGE TemplateHaskell   #-}
-{-# LANGUAGE ViewPatterns      #-}
 
 module Types where
 
-import Data.Foldable
-import Data.Functor.Foldable
-import Prelude hiding (lookup)
-import Data.Monoid
-import qualified Data.Map as M
-import Data.Map (Map)
-import Control.Monad.Writer
-import Control.Monad.Trans.State
-import Data.Char (toUpper)
-import Text.Read (readMaybe)
-import Data.Generics.Schemes
-import Data.Generics.Aliases
+import           Data.Char (toUpper)
+import           Data.Data
+import           Data.Functor.Foldable.TH
+import           Data.Generics.Aliases
+import           Data.Generics.Schemes
+import           Data.Set (Set)
 import qualified Data.Set as S
-import Data.Set (Set)
-import Data.Data
-import Data.String
-import Data.Functor.Foldable.TH
-import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
+import           Data.String
+import           Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
+import           Text.Read (readMaybe)
+
 
 data Prim
-  = Inl -- a -> a + b
-  | Inr -- b -> a + b
-  | Proj1 -- a * b -> a
-  | Proj2 -- a * b -> b
-  | Id -- a -> a
-  | Dist -- (a + b) * c -> a * c + b * c
+  = Inl    -- ^ a -> a + b
+  | Inr    -- ^ b -> a + b
+  | Proj1  -- ^ a * b -> a
+  | Proj2  -- ^ a * b -> b
+  | Id     -- ^ a -> a
+  | Dist   -- ^ (a + b) * c -> a * c + b * c
   deriving stock (Eq, Ord, Show, Read, Data, Typeable)
 
+
 instance Pretty Prim where
-  pPrint Inl = "inl"
-  pPrint Inr = "inr"
+  pPrint Inl   = "inl"
+  pPrint Inr   = "inr"
   pPrint Proj1 = "prj₁"
   pPrint Proj2 = "prj₂"
-  pPrint Id = "id"
-  pPrint Dist = "dist"
+  pPrint Id    = "id"
+  pPrint Dist  = "dist"
+
 
 data Expr a
   = Var a
@@ -52,31 +44,6 @@ data Expr a
   | Fork (Expr a) (Expr a)
   | Join (Expr a) (Expr a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
-
-pattern Push :: Expr a -> Expr a
-pattern Push f = Fork f (Prim Id)
-
-pattern Index :: Int -> Expr a
-pattern Index n <- (countNs -> Just n)
-  where Index n = foldr AndThen (Prim Proj1) $ replicate n $ Prim Proj2
-
-pattern (:.) :: Expr a -> Expr a -> Expr a
-pattern (:.)f g <- (split -> (f, g))
-  where
-    (:.) f (Prim Id) = f
-    (:.) (Prim Id) f = f
-    (:.) f g = AndThen f g
-infixr 0 :.
-
-split :: Expr a -> (Expr a, Expr a)
-split (AndThen (AndThen f g) h) = fmap (flip AndThen $ AndThen g h) $ split f
-split (AndThen f g) = (f, g)
-split x = (x, Prim Id)
-
-countNs :: Expr a -> Maybe Int
-countNs (Prim Proj2 :. e) = fmap (+ 1) $ countNs e
-countNs (Prim Proj1) = Just 0
-countNs _ = Nothing
 
 instance Pretty a => Pretty (Expr a) where
   pPrintPrec l p (Index n) =
@@ -112,28 +79,37 @@ instance IsString a => IsString (Expr a) where
       Just p -> Prim p
       Nothing -> Var $ fromString s
 
-data Val
-  = VPair Val Val
-  | VInl Val
-  | VInr Val
-  | VLit Lit
-  | VFunc (Val -> Val)
+pattern Push :: Expr a -> Expr a
+pattern Push f = Fork f (Prim Id)
 
-instance Pretty Val where
-  pPrint (VPair x y) = prettyTuple [x, y]
-  -- TODO(sandy): stupid, should do assoc
-  pPrint (VInl x) = parens $ "inl" <+> pPrint x
-  pPrint (VInr x) = parens $ "inr" <+> pPrint x
-  pPrint (VLit x) = pPrint x
-  pPrint (VFunc _) = "<fn>"
+pattern Index :: Int -> Expr a
+pattern Index n <- (countNs -> Just n)
+  where Index n = foldr AndThen (Prim Proj1) $ replicate n $ Prim Proj2
 
-instance IsString Val where
-  fromString = VLit . fromString
+pattern (:.) :: Expr a -> Expr a -> Expr a
+pattern (:.)f g <- (split -> (f, g))
+  where
+    (:.) f (Prim Id) = f
+    (:.) (Prim Id) f = f
+    (:.) f g = AndThen f g
+infixr 0 :.
+
+
+split :: Expr a -> (Expr a, Expr a)
+split (AndThen (AndThen f g) h) = fmap (flip AndThen $ AndThen g h) $ split f
+split (AndThen f g) = (f, g)
+split x = (x, Prim Id)
+
+countNs :: Expr a -> Maybe Int
+countNs (Prim Proj2 :. e) = fmap (+ 1) $ countNs e
+countNs (Prim Proj1) = Just 0
+countNs _ = Nothing
 
 
 mapFirst :: (Char -> Char) -> String -> String
 mapFirst _ [] = []
 mapFirst f (c : cs) = f c : cs
+
 
 data Lit
   = Unit
@@ -151,26 +127,24 @@ instance Pretty Lit where
 instance IsString Lit where
   fromString = Str
 
+
 data Stmt a
   = Run (Cmd a)
   | Bind a (Cmd a)
   | More (Stmt a) (Stmt a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
-data Cmd a
-  = Do (Expr a) [a]
-  | Case a (a, Stmt a) (a, Stmt a)
-  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
-
-prettyTuple :: Pretty a => [a] -> Doc
-prettyTuple [x] = pPrint x
-prettyTuple xs = parens $ hsep $ punctuate "," $ fmap pPrint xs
-
 instance Pretty a => Pretty (Stmt a) where
   pPrint (Run c) = pPrint c
   pPrint (Bind a c) =
     hang (pPrint a) 2 $ "<—" <> pPrint c
   pPrint (More a b) = pPrint a $$ pPrint b
+
+
+data Cmd a
+  = Do (Expr a) [a]
+  | Case a (a, Stmt a) (a, Stmt a)
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
 instance Pretty a => Pretty (Cmd a) where
   pPrint (Do e as) =
@@ -180,6 +154,11 @@ instance Pretty a => Pretty (Cmd a) where
       [ hang ("inl" <+> pPrint x <+> "→") 2 $ pPrint l
       , hang ("inr" <+> pPrint y <+> "→") 2 $ pPrint r
       ]
+
+
+prettyTuple :: Pretty a => [a] -> Doc
+prettyTuple [x] = pPrint x
+prettyTuple xs = parens $ hsep $ punctuate "," $ fmap pPrint xs
 
 
 data Constraint
@@ -210,194 +189,7 @@ primConstraints = everything (<>) $
     Char{} -> S.singleton LitChar
     Num{} -> S.singleton LitNum
 
-newtype Var = V { unVar :: String }
-  deriving stock (Eq, Ord, Show)
-  deriving newtype IsString
-
-instance Pretty Var where
-  pPrint = text . unVar
-
-progSwap :: Stmt Var
-progSwap = foldr1 More
-  [ Bind "x" $ Do "proj1" ["in"]
-  , Bind "y" $ Do "proj2" ["in"]
-  , Bind "z" $ Do "id" ["in"]
-  , Run $ Do "id" ["y", "x"]
-  ]
-
-progDup :: Stmt Var
-progDup = foldr1 More
-  -- NOTE(sandy): need to manually rename so the occurance count works properly
-  [ Bind "x_dup" $ Do "proj1" ["in"]
-  , Run $ Do "id" ["x_dup", "x_dup"]
-  ]
-
-simpleBranch :: Stmt Var
-simpleBranch = foldr1 More
-  [ Bind "x" $ Do "proj1" ["in"]
-  , Bind "y" $ Do "proj2" ["in"]
-  , Run $ Case "x"
-      ("a", Run $ Do "id" ["a", "x"])
-      ("b", foldr1 More
-        [ Bind "z" $ Do "id" ["y"]
-        , Run $ Do "id" ["b", "y"]
-        ])
-  ]
-
-progBranch :: Stmt Var
-progBranch = foldr1 More
-  [ Bind "p" $ Do "inl" ["in"]
-  , Bind "out" $ Case "p"
-      ("_", progSwap)
-      ("_", progDup)
-  , Bind "z" $ Do "proj1" ["out"]
-  , Bind "w" $ Do "proj2" ["out"]
-  , Bind "zw" $ Do "id" ["w", "z"]
-  , Run $ Do "id" ["out", "zw"]
-  ]
 
 (@@) :: Expr a -> Expr a -> Expr a
 (@@) f a = App f a
 infixl 1 @@
-
-desugared :: Expr Var
-desugared = quotient $ foldr AndThen "id"
-  [ Fork "proj1" "id"  -- ("x", in)
-  , Fork (AndThen "proj2" "proj2") "id"  -- ("y", ("x", in))
-  , Fork "proj1" $ AndThen "proj2" "proj1" -- ("y", "x")
-  ]
-
-
-newtype AllocM v a = AllocM { unAllocM :: StateT (Map v (Expr v)) (Writer [Expr v]) a }
-  deriving newtype (Functor, Applicative, Monad)
-  deriving (Semigroup, Monoid) via Ap (AllocM v) a
-
-alloc :: Ord v => v -> Expr v -> AllocM v ()
-alloc v e = AllocM $ do
-  tell $ pure $ Fork e (Prim Id)
-  -- succ everything in the context
-  modify $ fmap $ AndThen $ Prim Proj2
-  modify $ M.insert v $ Prim Proj1
-
-lookup :: Ord v => v -> AllocM v (Expr v)
-lookup v = AllocM $ gets (M.! v)
-
-compileStmt
-  :: Ord v
-  => Set v
-  -- ^ binders which need to be allocated, rather than just inlined
-  -> Stmt v -> AllocM v (Expr v)
-compileStmt allocs (More a b) = compileStmt allocs a >> compileStmt allocs b
-compileStmt allocs (Bind v c) = do
-  e <- compileCmd allocs c
-  case S.member v allocs of
-    True -> do
-      alloc v e
-    False -> do
-      AllocM $ modify $ M.insert v e
-  lookup v
-compileStmt allocs (Run c) = compileCmd allocs c
-
-compileCmd
-  :: Ord v
-  => Set v
-  -- ^ binders which need to be allocated, rather than just inlined
-  -> Cmd v -> AllocM v (Expr v)
-compileCmd allocs (Case a (x, l) (y, r)) = do
-  a' <- lookup a
-  l' <-
-    isolate $ do
-      alloc x $ Prim Proj1
-      compileStmt allocs l
-  r' <-
-    isolate $ do
-      alloc y $ Prim Proj1
-      compileStmt allocs r
-  pure $ foldr1 AndThen
-    [ Fork a' $ Prim Id
-    , Prim Dist
-    , Join l' r'
-    ]
-compileCmd _ (Do e xs) = do
-  xs' <- traverse lookup xs
-  let args = foldr1 Fork xs'
-  pure $ AndThen args e
-
-useCount :: Ord a => Stmt a -> Map a Int
-useCount (More a b) = M.unionsWith (+) [useCount a, useCount b]
-useCount (Run c) = useCountCmd c
-useCount (Bind _ c) = useCountCmd c
-
-useCountCmd :: Ord a => Cmd a -> Map a Int
-useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) x
--- TODO(sandy): bug in this case; variable with the same name which get
--- introduced in the branches get considered together. renaming will fix it
-useCountCmd (Case a (_x, l) (_y, r)) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
-
-desugar :: Stmt Var -> Expr Var
-desugar ss =
-  let counts = useCount ss
-      needs_alloc = M.keysSet $ M.filter (> 1) counts
-      (out, binds)
-        = runWriter
-        $ flip evalStateT (M.singleton "in" "id")
-        $ unAllocM
-        $ compileStmt needs_alloc ss
-  in quotient $ foldr AndThen out binds
-
-quotient :: Expr a -> Expr a
-quotient = cata \case
-  AndThenF (Prim Id) x -> x
-  AndThenF x (Prim Id) -> x
-  AndThenF (Fork f _) (Prim Proj1 :. k) -> f :. k
-  AndThenF (Fork _ g) (Prim Proj2 :. k) -> g :. k
-  x -> embed x
-
-
--- | Run the action but don't touch the allocation state
-isolate :: AllocM v a -> AllocM v a
-isolate (AllocM x) = AllocM $ do
-  s <- get
-  a <- censor (const mempty) x
-  put s
-  pure a
-
-eval :: Expr a -> Val
-eval (Prim Inl) = VFunc VInl
-eval (Prim Inr) = VFunc VInr
-eval (Prim Proj1) = VFunc $
-  \case
-    VPair x _ -> x
-    _ -> error "projection of a nonpair"
-eval (Prim Proj2) = VFunc $
-  \case
-    VPair _ y -> y
-    _ -> error "projection of a nonpair"
-eval (Prim Dist) = VFunc $
-  \case
-    VPair (VInl a) c -> VInl (VPair a c)
-    VPair (VInr b) c -> VInr (VPair b c)
-    _ -> error "distrib of a nonpair"
-eval (Var _) = error "var!"
-eval (Lit l) = VLit l
-eval (App (eval -> VFunc f) (eval -> a)) = f a
-eval App{} = error "bad app"
-eval (AndThen (eval -> VFunc f) (eval -> VFunc g)) = VFunc (g . f)
-eval AndThen{} = error "bad then"
-eval (Fork (eval -> VFunc f) (eval -> VFunc g)) = VFunc $ \a -> VPair (f a) (g a)
-eval Fork{} = error "bad fork"
-eval (Join (eval -> VFunc f) (eval -> VFunc g)) =
-  VFunc $ \case
-    VInl a -> f a
-    VInr a -> g a
-    _ -> error "join of a nonsum"
-eval Join{} = error "bad join"
-eval (Prim Id) = VFunc id
-
-mkPair :: [Val] -> Val
-mkPair = foldr1 VPair
-
-run :: Val -> Expr a -> IO ()
-run a (eval -> VFunc f) = print $ pPrint $ f a
-run _ _ = error "running a nonfunction"
-
