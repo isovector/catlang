@@ -48,6 +48,7 @@ data Expr a
   | App (Expr a) (Expr a)
   | AndThen (Expr a) (Expr a)
   | Fork (Expr a) (Expr a)
+  | Join (Expr a) (Expr a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
 instance Pretty a => Pretty (Expr a) where
@@ -64,6 +65,9 @@ instance Pretty a => Pretty (Expr a) where
   pPrintPrec l p (Fork f g) =
     maybeParens (p >= 4) $
       pPrintPrec l 3 f <+> "▵" <+> pPrintPrec l 3 g
+  pPrintPrec l p (Join f g) =
+    maybeParens (p >= 5) $
+      pPrintPrec l 4 f <+> "▿" <+> pPrintPrec l 4 g
 
 instance IsString a => IsString (Expr a) where
   fromString s =
@@ -113,6 +117,8 @@ instance IsString Lit where
 data Stmt a
   = Run (Expr a) [a]
   | Bind a (Expr a) [a]
+  | Case a (Stmt a) (Stmt a)
+  | More (Stmt a) (Stmt a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
 prettyTuple :: Pretty a => [a] -> Doc
@@ -124,8 +130,12 @@ instance Pretty a => Pretty (Stmt a) where
     pPrint e <+> "-<" <+> prettyTuple as
   pPrint (Bind a e as) =
     pPrint a <+> "<-" <+> pPrint e <+> "-<" <+> prettyTuple as
-
-
+  pPrint (More a b) = pPrint a $$ pPrint b
+  pPrint (Case a l r) =
+    hang ("case" <+> pPrint a <+> "of") 2 $ vcat
+      [ hang "inl ->" 2 $ pPrint l
+      , hang "inr ->" 2 $ pPrint r
+      ]
 
 
 data Constraint
@@ -146,7 +156,6 @@ primConstraints = everything (<>) $
   mkQ mempty \case
     Inl -> S.singleton Cocartesian
     Inr -> S.singleton Cocartesian
-    -- Fork -> S.singleton Cocartesian
     Proj1 -> S.singleton Cartesian
     Proj2 -> S.singleton Cartesian
     Id -> mempty
@@ -157,12 +166,27 @@ primConstraints = everything (<>) $
     Num{} -> S.singleton LitNum
 
 
-program :: [Stmt String]
-program =
+progSwap :: Stmt String
+progSwap = foldr1 More
   [ Bind "x" "proj1" ["in"]
   , Bind "y" "proj2" ["in"]
   , Bind "z" "id" ["in"]
   , Run "id" ["y", "x"]
+  ]
+
+progDup :: Stmt String
+progDup = foldr1 More
+  -- NOTE(sandy): need to manually rename so the occurance count works properly
+  [ Bind "x_dup" "proj1" ["in"]
+  , Run "id" ["x_dup", "x_dup"]
+  ]
+
+progBranch :: Stmt String
+progBranch = foldr1 More
+  [ Bind "p" "inr" ["in"]
+  , Case "p"
+      progSwap
+      progDup
   ]
 
 (@@) :: Expr a -> Expr a -> Expr a
@@ -196,6 +220,12 @@ compileStmt
   => Set v
   -- ^ binders which need to be allocated, rather than just inlined
   -> Stmt v -> AllocM v (Expr v)
+compileStmt allocs (More a b) = compileStmt allocs a >> compileStmt allocs b
+compileStmt allocs (Case a l r) = do
+  a' <- lookup a
+  l' <- isolate $ compileStmt allocs l
+  r' <- isolate $ compileStmt allocs r
+  pure $ AndThen a' $ Join l' r'
 compileStmt allocs (Bind v e xs) = do
   xs' <- traverse lookup xs
   let args = foldr1 Fork xs'
@@ -206,8 +236,6 @@ compileStmt allocs (Bind v e xs) = do
     False -> do
       AllocM $ modify $ M.insert v e'
   lookup v
-
-
 compileStmt _ (Run e xs) = do
   xs' <- traverse lookup xs
   let args = foldr1 Fork xs'
@@ -216,17 +244,20 @@ compileStmt _ (Run e xs) = do
 useCount :: Ord a => Stmt a -> Map a Int
 useCount (Bind _ _ x) = M.fromListWith (+) $ fmap (, 1) x
 useCount (Run _ x) = M.fromListWith (+) $ fmap (, 1) x
+useCount (More a b) = M.unionsWith (+) [useCount a, useCount b]
+-- TODO(sandy): bug in this case; variable with the same name which get
+-- introduced in the branches get considered together. renaming will fix it
+useCount (Case a l r) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
 
-desugar :: [Stmt String] -> Expr String
+desugar :: Stmt String -> Expr String
 desugar ss =
-  let counts = M.unionsWith (+) $ fmap useCount ss
+  let counts = useCount ss
       needs_alloc = M.keysSet $ M.filter (> 1) counts
       (out, binds)
         = runWriter
         $ flip evalStateT (M.singleton "in" "id")
         $ unAllocM
-        $ foldr1 (*>)
-        $ fmap (compileStmt needs_alloc) ss
+        $ compileStmt needs_alloc ss
   in quotient $ foldr AndThen out binds
 
 quotient :: Expr a -> Expr a
@@ -250,6 +281,13 @@ split (AndThen f g) = (f, g)
 split x = (x, Prim Id)
 
 
+-- | Run the action but don't touch the allocation state
+isolate :: AllocM v a -> AllocM v a
+isolate (AllocM x) = AllocM $ do
+  s <- get
+  a <- censor (const mempty) x
+  put s
+  pure a
 
 eval :: Expr a -> Val
 eval (Prim Inl) = VFunc VInl
@@ -270,6 +308,12 @@ eval (AndThen (eval -> VFunc f) (eval -> VFunc g)) = VFunc (g . f)
 eval AndThen{} = error "bad then"
 eval (Fork (eval -> VFunc f) (eval -> VFunc g)) = VFunc $ \a -> VPair (f a) (g a)
 eval Fork{} = error "bad fork"
+eval (Join (eval -> VFunc f) (eval -> VFunc g)) =
+  VFunc $ \case
+    VInl a -> f a
+    VInr a -> g a
+    _ -> error "join of a nonsum"
+eval Join{} = error "bad join"
 eval (Prim Id) = VFunc id
 
 mkPair :: [Val] -> Val
