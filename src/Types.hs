@@ -27,11 +27,12 @@ import Data.Functor.Foldable.TH
 import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 
 data Prim
-  = Inl
-  | Inr
-  | Proj1
-  | Proj2
-  | Id
+  = Inl -- a -> a + b
+  | Inr -- b -> a + b
+  | Proj1 -- a * b -> a
+  | Proj2 -- a * b -> b
+  | Id -- a -> a
+  | Dist -- (a + b) * c -> a * c + b * c
   deriving stock (Eq, Ord, Show, Read, Data, Typeable)
 
 instance Pretty Prim where
@@ -40,6 +41,7 @@ instance Pretty Prim where
   pPrint Proj1 = "prj₁"
   pPrint Proj2 = "prj₂"
   pPrint Id = "id"
+  pPrint Dist = "dist"
 
 data Expr a
   = Var a
@@ -122,7 +124,7 @@ data Stmt a
 
 data Cmd a
   = Do (Expr a) [a]
-  | Case a (Stmt a) (Stmt a)
+  | Case a (a, Stmt a) (a, Stmt a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
 prettyTuple :: Pretty a => [a] -> Doc
@@ -138,10 +140,10 @@ instance Pretty a => Pretty (Stmt a) where
 instance Pretty a => Pretty (Cmd a) where
   pPrint (Do e as) =
     (pPrint e <> "—<") <+> prettyTuple as
-  pPrint (Case a l r) =
+  pPrint (Case a (x, l) (y, r)) =
     hang ("case" <+> pPrint a <+> "of") 2 $ vcat
-      [ hang "inl →" 2 $ pPrint l
-      , hang "inr →" 2 $ pPrint r
+      [ hang ("inl" <+> pPrint x <+> "→") 2 $ pPrint l
+      , hang ("inr" <+> pPrint y <+> "→") 2 $ pPrint r
       ]
 
 
@@ -166,6 +168,7 @@ primConstraints = everything (<>) $
     Proj1 -> S.singleton Cartesian
     Proj2 -> S.singleton Cartesian
     Id -> mempty
+    Dist -> S.fromList [Cartesian, Cocartesian]
   `extQ` \case
     Unit -> S.singleton Terminal
     Str{} -> S.singleton LitStr
@@ -194,12 +197,24 @@ progDup = foldr1 More
   , Run $ Do "id" ["x_dup", "x_dup"]
   ]
 
+simpleBranch :: Stmt Var
+simpleBranch = foldr1 More
+  [ Bind "x" $ Do "proj1" ["in"]
+  , Bind "y" $ Do "proj2" ["in"]
+  , Run $ Case "x"
+      ("a", Run $ Do "id" ["a", "x"])
+      ("b", foldr1 More
+        [ Bind "z" $ Do "id" ["y"]
+        , Run $ Do "id" ["b", "y"]
+        ])
+  ]
+
 progBranch :: Stmt Var
 progBranch = foldr1 More
   [ Bind "p" $ Do "inl" ["in"]
   , Bind "out" $ Case "p"
-      progSwap
-      progDup
+      ("_", progSwap)
+      ("_", progDup)
   , Bind "z" $ Do "proj1" ["out"]
   , Bind "w" $ Do "proj2" ["out"]
   , Bind "zw" $ Do "id" ["w", "z"]
@@ -253,11 +268,21 @@ compileCmd
   => Set v
   -- ^ binders which need to be allocated, rather than just inlined
   -> Cmd v -> AllocM v (Expr v)
-compileCmd allocs (Case a l r) = do
+compileCmd allocs (Case a (x, l) (y, r)) = do
   a' <- lookup a
-  l' <- isolate $ compileStmt allocs l
-  r' <- isolate $ compileStmt allocs r
-  pure $ AndThen a' $ Join l' r'
+  l' <-
+    isolate $ do
+      alloc x $ Prim Proj1
+      compileStmt allocs l
+  r' <-
+    isolate $ do
+      alloc y $ Prim Proj1
+      compileStmt allocs r
+  pure $ foldr1 AndThen
+    [ Fork a' $ Prim Id
+    , Prim Dist
+    , Join l' r'
+    ]
 compileCmd _ (Do e xs) = do
   xs' <- traverse lookup xs
   let args = foldr1 Fork xs'
@@ -272,7 +297,7 @@ useCountCmd :: Ord a => Cmd a -> Map a Int
 useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) x
 -- TODO(sandy): bug in this case; variable with the same name which get
 -- introduced in the branches get considered together. renaming will fix it
-useCountCmd (Case a l r) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
+useCountCmd (Case a (_x, l) (_y, r)) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
 
 desugar :: Stmt Var -> Expr Var
 desugar ss =
@@ -325,6 +350,11 @@ eval (Prim Proj2) = VFunc $
   \case
     VPair _ y -> y
     _ -> error "projection of a nonpair"
+eval (Prim Dist) = VFunc $
+  \case
+    VPair (VInl a) c -> VInl (VPair a c)
+    VPair (VInr b) c -> VInr (VPair b c)
+    _ -> error "distrib of a nonpair"
 eval (Var _) = error "var!"
 eval (Lit l) = VLit l
 eval (App (eval -> VFunc f) (eval -> a)) = f a
