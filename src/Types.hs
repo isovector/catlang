@@ -132,16 +132,16 @@ prettyTuple xs = parens $ hsep $ punctuate "," $ fmap pPrint xs
 instance Pretty a => Pretty (Stmt a) where
   pPrint (Run c) = pPrint c
   pPrint (Bind a c) =
-    pPrint a <+> "<-" <+> pPrint c
+    hang (pPrint a) 2 $ "<—" <> pPrint c
   pPrint (More a b) = pPrint a $$ pPrint b
 
 instance Pretty a => Pretty (Cmd a) where
   pPrint (Do e as) =
-    pPrint e <+> "-<" <+> prettyTuple as
+    (pPrint e <> "—<") <+> prettyTuple as
   pPrint (Case a l r) =
     hang ("case" <+> pPrint a <+> "of") 2 $ vcat
-      [ hang "inl ->" 2 $ pPrint l
-      , hang "inr ->" 2 $ pPrint r
+      [ hang "inl →" 2 $ pPrint l
+      , hang "inr →" 2 $ pPrint r
       ]
 
 
@@ -172,8 +172,14 @@ primConstraints = everything (<>) $
     Char{} -> S.singleton LitChar
     Num{} -> S.singleton LitNum
 
+newtype Var = V { unVar :: String }
+  deriving stock (Eq, Ord, Show)
+  deriving newtype IsString
 
-progSwap :: Stmt String
+instance Pretty Var where
+  pPrint = text . unVar
+
+progSwap :: Stmt Var
 progSwap = foldr1 More
   [ Bind "x" $ Do "proj1" ["in"]
   , Bind "y" $ Do "proj2" ["in"]
@@ -181,14 +187,14 @@ progSwap = foldr1 More
   , Run $ Do "id" ["y", "x"]
   ]
 
-progDup :: Stmt String
+progDup :: Stmt Var
 progDup = foldr1 More
   -- NOTE(sandy): need to manually rename so the occurance count works properly
   [ Bind "x_dup" $ Do "proj1" ["in"]
   , Run $ Do "id" ["x_dup", "x_dup"]
   ]
 
-progBranch :: Stmt String
+progBranch :: Stmt Var
 progBranch = foldr1 More
   [ Bind "p" $ Do "inl" ["in"]
   , Bind "out" $ Case "p"
@@ -204,7 +210,7 @@ progBranch = foldr1 More
 (@@) f a = App f a
 infixl 1 @@
 
-desugared :: Expr String
+desugared :: Expr Var
 desugared = quotient $ foldr AndThen "id"
   [ Fork "proj1" "id"  -- ("x", in)
   , Fork (AndThen "proj2" "proj2") "id"  -- ("y", ("x", in))
@@ -268,7 +274,7 @@ useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) x
 -- introduced in the branches get considered together. renaming will fix it
 useCountCmd (Case a l r) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
 
-desugar :: Stmt String -> Expr String
+desugar :: Stmt Var -> Expr Var
 desugar ss =
   let counts = useCount ss
       needs_alloc = M.keysSet $ M.filter (> 1) counts
