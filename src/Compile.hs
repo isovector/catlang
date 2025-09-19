@@ -21,12 +21,19 @@ newtype AllocM v a = AllocM { unAllocM :: StateT (Map v (Expr v)) (Writer [Expr 
   deriving (Semigroup, Monoid) via Ap (AllocM v) a
 
 
+stackSucc :: AllocM v ()
+stackSucc = AllocM $ modify $ fmap $ AndThen $ Prim Proj2
+
+
 alloc :: Ord v => v -> Expr v -> AllocM v ()
 alloc v e = AllocM $ do
   tell $ pure $ Fork e (Prim Id)
-  -- succ everything in the context
-  modify $ fmap $ AndThen $ Prim Proj2
+  unAllocM stackSucc
   modify $ M.insert v $ Prim Proj1
+
+inform :: Ord v => v -> Expr v -> AllocM v ()
+inform v e = AllocM $ modify $ M.insert v e
+
 
 
 lookup :: Ord v => v -> AllocM v (Expr v)
@@ -42,10 +49,8 @@ compileStmt allocs (More a b) = compileStmt allocs a >> compileStmt allocs b
 compileStmt allocs (Bind v c) = do
   e <- compileCmd allocs c
   case S.member v allocs of
-    True -> do
-      alloc v e
-    False -> do
-      AllocM $ modify $ M.insert v e
+    True -> alloc v e
+    False -> inform v e
   lookup v
 compileStmt allocs (Run c) = compileCmd allocs c
 
@@ -59,13 +64,13 @@ compileCmd allocs (Case a (x, l) (y, r)) = do
   a' <- lookup a
   l' <-
     isolate $ do
-      -- TODO(sandy): is this right? should it be an alloc?? isn't it already
-      -- on the stack from the distrib?
-      alloc x $ Prim Proj1
+      stackSucc
+      inform x $ Prim Proj1
       compileStmt allocs l
   r' <-
     isolate $ do
-      alloc y $ Prim Proj1
+      stackSucc
+      inform y $ Prim Proj1
       compileStmt allocs r
   pure $ foldr1 AndThen
     [ Fork a' $ Prim Id
@@ -117,9 +122,9 @@ quotient = cata \case
 
 
 -- | Run the action but don't touch the allocation state
-isolate :: AllocM v a -> AllocM v a
+isolate :: AllocM v (Expr v) -> AllocM v (Expr v)
 isolate (AllocM x) = AllocM $ do
   s <- get
-  a <- censor (const mempty) x
+  (a, binds) <- censor (const mempty) $ listen x
   put s
-  pure a
+  pure $ foldr AndThen a binds

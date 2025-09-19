@@ -2,9 +2,7 @@
 
 module Eval where
 
-import qualified Data.Map as M
 import Data.Functor.Foldable
-import Data.Map (Map)
 import Data.String
 import Text.PrettyPrint.HughesPJClass hiding ((<>))
 import Types

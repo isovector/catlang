@@ -45,7 +45,9 @@ programs = M.fromList
   , ("branch",) $ AnonArrow "in" $ foldr1 More
       [ Bind "p" $ Do "inl" ["in"]
       , Bind "out" $ Case "p"
-          ("_", Run $ Do "swap" ["in"])
+          ("a", foldr1 More
+              [ Run $ Do "swap" ["a", "a"]
+              ])
           ("_", Run $ Do "dup" ["in"])
       , Bind "z" $ Do "proj1" ["out"]
       , Bind "w" $ Do "proj2" ["out"]
@@ -59,6 +61,8 @@ run :: Var -> Val -> IO ()
 run v val = do
   let compiled = compileProg programs
       knotted = fmap (inline (compiled M.!)) compiled
+  print $ pPrint $ knotted M.! v
+  putStrLn ""
   VFunc f <- pure $ eval $ knotted M.! v
   print $ pPrint $ f val
 
