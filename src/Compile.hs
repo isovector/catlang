@@ -12,7 +12,6 @@ import qualified Data.Map as M
 import           Data.Monoid
 import           Data.Set (Set)
 import qualified Data.Set as S
-import           Data.String
 import           Prelude hiding (lookup)
 import           Types
 
@@ -60,6 +59,8 @@ compileCmd allocs (Case a (x, l) (y, r)) = do
   a' <- lookup a
   l' <-
     isolate $ do
+      -- TODO(sandy): is this right? should it be an alloc?? isn't it already
+      -- on the stack from the distrib?
       alloc x $ Prim Proj1
       compileStmt allocs l
   r' <-
@@ -90,16 +91,20 @@ useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) x
 useCountCmd (Case a (_x, l) (_y, r)) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
 
 
-desugar :: (Ord a, IsString a) => Stmt a -> Expr a
-desugar ss =
+desugar :: Ord a => TopDecl a -> Expr a
+desugar (AnonArrow input ss) =
   let counts = useCount ss
       needs_alloc = M.keysSet $ M.filter (> 1) counts
       (out, binds)
         = runWriter
-        $ flip evalStateT (M.singleton "in" "id")
+        $ flip evalStateT (M.singleton input $ Prim Id)
         $ unAllocM
         $ compileStmt needs_alloc ss
   in quotient $ foldr AndThen out binds
+
+
+compileProg :: (Functor t, Ord a) => t (TopDecl a) -> t (Expr a)
+compileProg = fmap desugar
 
 
 quotient :: Expr a -> Expr a

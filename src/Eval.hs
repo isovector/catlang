@@ -2,6 +2,9 @@
 
 module Eval where
 
+import qualified Data.Map as M
+import Data.Functor.Foldable
+import Data.Map (Map)
 import Data.String
 import Text.PrettyPrint.HughesPJClass hiding ((<>))
 import Types
@@ -63,7 +66,8 @@ mkPair :: [Val] -> Val
 mkPair = foldr1 VPair
 
 
-run :: Val -> Expr a -> IO ()
-run a (eval -> VFunc f) = print $ pPrint $ f a
-run _ _ = error "running a nonfunction"
+inline :: (a -> Expr a) -> Expr a -> Expr a
+inline f = cata $ \case
+  VarF a -> f a
+  x -> embed x
 

@@ -56,7 +56,9 @@ instance Pretty a => Pretty (Expr a) where
     maybeParens (p >= 10) $
       "push" <+> pPrintPrec l 10 f
 
-  pPrintPrec l p (Var a) = pPrintPrec l p a
+  pPrintPrec l p (Var a) =
+    maybeParens (p >= 10) $
+      "call" <+> pPrintPrec l 10 a
   pPrintPrec l p (Prim pr) = pPrintPrec l p pr
   pPrintPrec l p (Lit pr) = pPrintPrec l p pr
   pPrintPrec l p (App f a) =
@@ -170,6 +172,17 @@ data Constraint
   | LitChar
   | LitNum
   deriving stock (Eq, Ord, Show, Data, Typeable)
+
+
+data TopDecl a
+  = AnonArrow
+      a  -- ^ Input name
+      (Stmt a)
+
+instance Pretty a => Pretty (TopDecl a) where
+  pPrint (AnonArrow a b) =
+    hang (pPrint a <+> "→") 2 $ pPrint b
+
 
 makeBaseFunctor [''Prim, ''Expr, ''Lit, ''Stmt, ''Constraint, ''Cmd]
 
