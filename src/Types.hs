@@ -7,6 +7,7 @@
 
 module Types where
 
+import Data.Foldable
 import Data.Functor.Foldable
 import Prelude hiding (lookup)
 import Data.Monoid
@@ -23,15 +24,22 @@ import Data.Set (Set)
 import Data.Data
 import Data.String
 import Data.Functor.Foldable.TH
+import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 
 data Prim
   = Inl
   | Inr
   | Proj1
   | Proj2
-  | Join
-  | Nop
+  | Id
   deriving stock (Eq, Ord, Show, Read, Data, Typeable)
+
+instance Pretty Prim where
+  pPrint Inl = "inl"
+  pPrint Inr = "inr"
+  pPrint Proj1 = "prj₁"
+  pPrint Proj2 = "prj₂"
+  pPrint Id = "id"
 
 data Expr a
   = Var a
@@ -41,6 +49,21 @@ data Expr a
   | AndThen (Expr a) (Expr a)
   | Fork (Expr a) (Expr a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
+
+instance Pretty a => Pretty (Expr a) where
+  pPrintPrec l p (Var a) = pPrintPrec l p a
+  pPrintPrec l p (Prim pr) = pPrintPrec l p pr
+  pPrintPrec l p (Lit pr) = pPrintPrec l p pr
+  pPrintPrec l p (App f a) =
+    maybeParens (p >= 10) $
+      hang (pPrintPrec l 9 f) 2 $
+        pPrintPrec l 10 a
+  pPrintPrec l p (AndThen f g) =
+    maybeParens (p >= 3) $
+      pPrintPrec l 2 f <+> "⨟" <+> pPrintPrec l 2 g
+  pPrintPrec l p (Fork f g) =
+    maybeParens (p >= 4) $
+      pPrintPrec l 3 f <+> "▵" <+> pPrintPrec l 3 g
 
 instance IsString a => IsString (Expr a) where
   fromString s =
@@ -54,10 +77,14 @@ data Val
   | VInr Val
   | VLit Lit
   | VFunc (Val -> Val)
-  deriving stock Show
 
-instance Show (a -> b) where
-  show _ = "<fn>"
+instance Pretty Val where
+  pPrint (VPair x y) = prettyTuple [x, y]
+  -- TODO(sandy): stupid, should do assoc
+  pPrint (VInl x) = parens $ "inl" <+> pPrint x
+  pPrint (VInr x) = parens $ "inr" <+> pPrint x
+  pPrint (VLit x) = pPrint x
+  pPrint (VFunc _) = "<fn>"
 
 instance IsString Val where
   fromString = VLit . fromString
@@ -74,6 +101,12 @@ data Lit
   | Num Integer
   deriving stock (Eq, Ord, Show, Data, Typeable)
 
+instance Pretty Lit where
+  pPrint Unit = "!"
+  pPrint (Str s) = pPrint s
+  pPrint (Char c) = pPrint c
+  pPrint (Num i) = pPrint i
+
 instance IsString Lit where
   fromString = Str
 
@@ -81,6 +114,17 @@ data Stmt a
   = Run (Expr a) [a]
   | Bind a (Expr a) [a]
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
+
+prettyTuple :: Pretty a => [a] -> Doc
+prettyTuple [x] = pPrint x
+prettyTuple xs = parens $ hsep $ punctuate "," $ fmap pPrint xs
+
+instance Pretty a => Pretty (Stmt a) where
+  pPrint (Run e as) =
+    pPrint e <+> "-<" <+> prettyTuple as
+  pPrint (Bind a e as) =
+    pPrint a <+> "<-" <+> pPrint e <+> "-<" <+> prettyTuple as
+
 
 
 
@@ -105,8 +149,7 @@ primConstraints = everything (<>) $
     -- Fork -> S.singleton Cocartesian
     Proj1 -> S.singleton Cartesian
     Proj2 -> S.singleton Cartesian
-    Join -> S.singleton Cartesian
-    Nop -> mempty
+    Id -> mempty
   `extQ` \case
     Unit -> S.singleton Terminal
     Str{} -> S.singleton LitStr
@@ -118,8 +161,8 @@ program :: [Stmt String]
 program =
   [ Bind "x" "proj1" ["in"]
   , Bind "y" "proj2" ["in"]
-  , Bind "z" "nop" ["x"]
-  , Run "nop" ["y", "x"]
+  -- , Bind "z" "id" ["x"]
+  , Run "id" ["y", "x"]
   ]
 
 (@@) :: Expr a -> Expr a -> Expr a
@@ -127,9 +170,9 @@ program =
 infixl 1 @@
 
 desugared :: Expr String
-desugared = quotient $ foldr AndThen "nop"
-  [ Fork "proj1" "nop"  -- ("x", in)
-  , Fork (AndThen "proj2" "proj2") "nop"  -- ("y", ("x", in))
+desugared = quotient $ foldr AndThen "id"
+  [ Fork "proj1" "id"  -- ("x", in)
+  , Fork (AndThen "proj2" "proj2") "id"  -- ("y", ("x", in))
   , Fork "proj1" $ AndThen "proj2" "proj1" -- ("y", "x")
   ]
 
@@ -140,7 +183,7 @@ newtype AllocM v a = AllocM { unAllocM :: StateT (Map v (Expr v)) (Writer [Expr 
 
 alloc :: Ord v => v -> Expr v -> AllocM v ()
 alloc v e = AllocM $ do
-  tell $ pure $ Fork e (Prim Nop)
+  tell $ pure $ Fork e (Prim Id)
   -- succ everything in the context
   modify $ fmap $ AndThen $ Prim Proj2
   modify $ M.insert v $ Prim Proj1
@@ -161,14 +204,34 @@ compileStmt (Run e xs) = do
 
 desugar :: [Stmt String] -> Expr String
 desugar ss =
-  let (out, binds) = runWriter $ flip evalStateT (M.singleton "in" "nop") $ unAllocM $ foldr1 (*>) $ fmap compileStmt ss
+  let (out, binds)
+        = runWriter
+        $ flip evalStateT (M.singleton "in" "id")
+        $ unAllocM
+        $ foldr1 (*>)
+        $ fmap compileStmt ss
   in quotient $ foldr AndThen out binds
 
 quotient :: Expr a -> Expr a
 quotient = cata \case
-  AndThenF (Prim Nop) x -> x
-  AndThenF x (Prim Nop) -> x
+  AndThenF (Prim Id) x -> x
+  AndThenF x (Prim Id) -> x
+  AndThenF (Fork f _) (Prim Proj1 :. k) -> f :. k
+  AndThenF (Fork _ g) (Prim Proj2 :. k) -> g :. k
   x -> embed x
+
+pattern (:.) :: Expr a -> Expr a -> Expr a
+pattern (:.)f g <- (split -> (f, g))
+  where
+    (:.) f (Prim Id) = f
+    (:.) (Prim Id) f = f
+    (:.) f g = AndThen f g
+
+split :: Expr a -> (Expr a, Expr a)
+split (AndThen (AndThen f g) h) = fmap (flip AndThen $ AndThen g h) $ split f
+split (AndThen f g) = (f, g)
+split x = (x, Prim Id)
+
 
 
 eval :: Expr a -> Val
@@ -190,13 +253,12 @@ eval (AndThen (eval -> VFunc f) (eval -> VFunc g)) = VFunc (g . f)
 eval AndThen{} = error "bad then"
 eval (Fork (eval -> VFunc f) (eval -> VFunc g)) = VFunc $ \a -> VPair (f a) (g a)
 eval Fork{} = error "bad fork"
-eval (Prim Nop) = VFunc id
-eval (Prim Join) = error "no join yet"
+eval (Prim Id) = VFunc id
 
 mkPair :: [Val] -> Val
 mkPair = foldr1 VPair
 
-run :: Val -> Expr a -> Val
-run a (eval -> VFunc f) = f a
+run :: Val -> Expr a -> IO ()
+run a (eval -> VFunc f) = print $ pPrint $ f a
 run _ _ = error "running a nonfunction"
 

@@ -41,6 +41,7 @@ library
       base >=4.7 && <5
     , containers
     , mtl
+    , pretty
     , recursion-schemes
     , syb
     , transformers
@@ -65,6 +66,7 @@ test-suite catlang-test
     , catlang
     , containers
     , mtl
+    , pretty
     , recursion-schemes
     , syb
     , transformers

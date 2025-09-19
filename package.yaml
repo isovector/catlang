@@ -27,6 +27,7 @@ dependencies:
 - transformers
 - mtl
 - syb
+- pretty
 
 default-extensions:
 - DerivingStrategies
