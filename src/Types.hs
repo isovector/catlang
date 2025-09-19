@@ -1,7 +1,9 @@
 {-# LANGUAGE BlockArguments    #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms   #-}
 {-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE ViewPatterns      #-}
 
 module Types where
 
@@ -25,7 +27,6 @@ import Data.Functor.Foldable.TH
 data Prim
   = Inl
   | Inr
-  | Fork
   | Proj1
   | Proj2
   | Join
@@ -38,6 +39,7 @@ data Expr a
   | Lit Lit
   | App (Expr a) (Expr a)
   | AndThen (Expr a) (Expr a)
+  | Fork (Expr a) (Expr a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
 instance IsString a => IsString (Expr a) where
@@ -45,6 +47,21 @@ instance IsString a => IsString (Expr a) where
     case readMaybe $ mapFirst toUpper s of
       Just p -> Prim p
       Nothing -> Var $ fromString s
+
+data Val
+  = VPair Val Val
+  | VInl Val
+  | VInr Val
+  | VLit Lit
+  | VFunc (Val -> Val)
+  deriving stock Show
+
+instance Show (a -> b) where
+  show _ = "<fn>"
+
+instance IsString Val where
+  fromString = VLit . fromString
+
 
 mapFirst :: (Char -> Char) -> String -> String
 mapFirst _ [] = []
@@ -56,6 +73,9 @@ data Lit
   | Char Char
   | Num Integer
   deriving stock (Eq, Ord, Show, Data, Typeable)
+
+instance IsString Lit where
+  fromString = Str
 
 data Stmt a
   = Run (Expr a) [a]
@@ -82,7 +102,7 @@ primConstraints = everything (<>) $
   mkQ mempty \case
     Inl -> S.singleton Cocartesian
     Inr -> S.singleton Cocartesian
-    Fork -> S.singleton Cocartesian
+    -- Fork -> S.singleton Cocartesian
     Proj1 -> S.singleton Cartesian
     Proj2 -> S.singleton Cartesian
     Join -> S.singleton Cartesian
@@ -98,6 +118,7 @@ program :: [Stmt String]
 program =
   [ Bind "x" "proj1" ["in"]
   , Bind "y" "proj2" ["in"]
+  , Bind "z" "nop" ["x"]
   , Run "nop" ["y", "x"]
   ]
 
@@ -107,9 +128,9 @@ infixl 1 @@
 
 desugared :: Expr String
 desugared = quotient $ foldr AndThen "nop"
-  [ "fork" @@ "proj1" @@ "nop"  -- ("x", in)
-  , "fork" @@ AndThen "proj2" "proj2" @@ "nop"  -- ("y", ("x", in))
-  , "fork" @@ "proj1" @@ AndThen "proj2" "proj1" -- ("y", "x")
+  [ Fork "proj1" "nop"  -- ("x", in)
+  , Fork (AndThen "proj2" "proj2") "nop"  -- ("y", ("x", in))
+  , Fork "proj1" $ AndThen "proj2" "proj1" -- ("y", "x")
   ]
 
 
@@ -119,7 +140,7 @@ newtype AllocM v a = AllocM { unAllocM :: StateT (Map v (Expr v)) (Writer [Expr 
 
 alloc :: Ord v => v -> Expr v -> AllocM v ()
 alloc v e = AllocM $ do
-  tell $ pure $ Prim Fork @@ e @@ Prim Nop
+  tell $ pure $ Fork e (Prim Nop)
   -- succ everything in the context
   modify $ fmap $ AndThen $ Prim Proj2
   modify $ M.insert v $ Prim Proj1
@@ -130,12 +151,12 @@ lookup v = AllocM $ gets (M.! v)
 compileStmt :: Ord v => Stmt v -> AllocM v (Expr v)
 compileStmt (Bind v e xs) = do
   xs' <- traverse lookup xs
-  let args = foldr1 (\a b -> Prim Fork @@ a @@ b) xs'
+  let args = foldr1 Fork xs'
   alloc v (AndThen args e)
   lookup v
 compileStmt (Run e xs) = do
   xs' <- traverse lookup xs
-  let args = foldr1 (\a b -> Prim Fork @@ a @@ b) xs'
+  let args = foldr1 Fork xs'
   pure $ AndThen args e
 
 desugar :: [Stmt String] -> Expr String
@@ -148,4 +169,34 @@ quotient = cata \case
   AndThenF (Prim Nop) x -> x
   AndThenF x (Prim Nop) -> x
   x -> embed x
+
+
+eval :: Expr a -> Val
+eval (Prim Inl) = VFunc VInl
+eval (Prim Inr) = VFunc VInr
+eval (Prim Proj1) = VFunc $
+  \case
+    VPair x _ -> x
+    _ -> error "projection of a nonpair"
+eval (Prim Proj2) = VFunc $
+  \case
+    VPair _ y -> y
+    _ -> error "projection of a nonpair"
+eval (Var _) = error "var!"
+eval (Lit l) = VLit l
+eval (App (eval -> VFunc f) (eval -> a)) = f a
+eval App{} = error "bad app"
+eval (AndThen (eval -> VFunc f) (eval -> VFunc g)) = VFunc (g . f)
+eval AndThen{} = error "bad then"
+eval (Fork (eval -> VFunc f) (eval -> VFunc g)) = VFunc $ \a -> VPair (f a) (g a)
+eval Fork{} = error "bad fork"
+eval (Prim Nop) = VFunc id
+eval (Prim Join) = error "no join yet"
+
+mkPair :: [Val] -> Val
+mkPair = foldr1 VPair
+
+run :: Val -> Expr a -> Val
+run a (eval -> VFunc f) = f a
+run _ _ = error "running a nonfunction"
 
