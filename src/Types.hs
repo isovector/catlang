@@ -115,10 +115,14 @@ instance IsString Lit where
   fromString = Str
 
 data Stmt a
-  = Run (Expr a) [a]
-  | Bind a (Expr a) [a]
-  | Case a (Stmt a) (Stmt a)
+  = Run (Cmd a)
+  | Bind a (Cmd a)
   | More (Stmt a) (Stmt a)
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
+
+data Cmd a
+  = Do (Expr a) [a]
+  | Case a (Stmt a) (Stmt a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
 
 prettyTuple :: Pretty a => [a] -> Doc
@@ -126,11 +130,14 @@ prettyTuple [x] = pPrint x
 prettyTuple xs = parens $ hsep $ punctuate "," $ fmap pPrint xs
 
 instance Pretty a => Pretty (Stmt a) where
-  pPrint (Run e as) =
-    pPrint e <+> "-<" <+> prettyTuple as
-  pPrint (Bind a e as) =
-    pPrint a <+> "<-" <+> pPrint e <+> "-<" <+> prettyTuple as
+  pPrint (Run c) = pPrint c
+  pPrint (Bind a c) =
+    pPrint a <+> "<-" <+> pPrint c
   pPrint (More a b) = pPrint a $$ pPrint b
+
+instance Pretty a => Pretty (Cmd a) where
+  pPrint (Do e as) =
+    pPrint e <+> "-<" <+> prettyTuple as
   pPrint (Case a l r) =
     hang ("case" <+> pPrint a <+> "of") 2 $ vcat
       [ hang "inl ->" 2 $ pPrint l
@@ -148,7 +155,7 @@ data Constraint
   | LitNum
   deriving stock (Eq, Ord, Show, Data, Typeable)
 
-makeBaseFunctor [''Prim, ''Expr, ''Lit, ''Stmt, ''Constraint]
+makeBaseFunctor [''Prim, ''Expr, ''Lit, ''Stmt, ''Constraint, ''Cmd]
 
 
 primConstraints :: Data a => a -> Set Constraint
@@ -168,25 +175,29 @@ primConstraints = everything (<>) $
 
 progSwap :: Stmt String
 progSwap = foldr1 More
-  [ Bind "x" "proj1" ["in"]
-  , Bind "y" "proj2" ["in"]
-  , Bind "z" "id" ["in"]
-  , Run "id" ["y", "x"]
+  [ Bind "x" $ Do "proj1" ["in"]
+  , Bind "y" $ Do "proj2" ["in"]
+  , Bind "z" $ Do "id" ["in"]
+  , Run $ Do "id" ["y", "x"]
   ]
 
 progDup :: Stmt String
 progDup = foldr1 More
   -- NOTE(sandy): need to manually rename so the occurance count works properly
-  [ Bind "x_dup" "proj1" ["in"]
-  , Run "id" ["x_dup", "x_dup"]
+  [ Bind "x_dup" $ Do "proj1" ["in"]
+  , Run $ Do "id" ["x_dup", "x_dup"]
   ]
 
 progBranch :: Stmt String
 progBranch = foldr1 More
-  [ Bind "p" "inr" ["in"]
-  , Case "p"
+  [ Bind "p" $ Do "inl" ["in"]
+  , Bind "out" $ Case "p"
       progSwap
       progDup
+  , Bind "z" $ Do "proj1" ["out"]
+  , Bind "w" $ Do "proj2" ["out"]
+  , Bind "zw" $ Do "id" ["w", "z"]
+  , Run $ Do "id" ["out", "zw"]
   ]
 
 (@@) :: Expr a -> Expr a -> Expr a
@@ -221,33 +232,41 @@ compileStmt
   -- ^ binders which need to be allocated, rather than just inlined
   -> Stmt v -> AllocM v (Expr v)
 compileStmt allocs (More a b) = compileStmt allocs a >> compileStmt allocs b
-compileStmt allocs (Case a l r) = do
+compileStmt allocs (Bind v c) = do
+  e <- compileCmd allocs c
+  case S.member v allocs of
+    True -> do
+      alloc v e
+    False -> do
+      AllocM $ modify $ M.insert v e
+  lookup v
+compileStmt allocs (Run c) = compileCmd allocs c
+
+compileCmd
+  :: Ord v
+  => Set v
+  -- ^ binders which need to be allocated, rather than just inlined
+  -> Cmd v -> AllocM v (Expr v)
+compileCmd allocs (Case a l r) = do
   a' <- lookup a
   l' <- isolate $ compileStmt allocs l
   r' <- isolate $ compileStmt allocs r
   pure $ AndThen a' $ Join l' r'
-compileStmt allocs (Bind v e xs) = do
-  xs' <- traverse lookup xs
-  let args = foldr1 Fork xs'
-  let e' = AndThen args e
-  case S.member v allocs of
-    True -> do
-      alloc v e'
-    False -> do
-      AllocM $ modify $ M.insert v e'
-  lookup v
-compileStmt _ (Run e xs) = do
+compileCmd _ (Do e xs) = do
   xs' <- traverse lookup xs
   let args = foldr1 Fork xs'
   pure $ AndThen args e
 
 useCount :: Ord a => Stmt a -> Map a Int
-useCount (Bind _ _ x) = M.fromListWith (+) $ fmap (, 1) x
-useCount (Run _ x) = M.fromListWith (+) $ fmap (, 1) x
 useCount (More a b) = M.unionsWith (+) [useCount a, useCount b]
+useCount (Run c) = useCountCmd c
+useCount (Bind _ c) = useCountCmd c
+
+useCountCmd :: Ord a => Cmd a -> Map a Int
+useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) x
 -- TODO(sandy): bug in this case; variable with the same name which get
 -- introduced in the branches get considered together. renaming will fix it
-useCount (Case a l r) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
+useCountCmd (Case a l r) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
 
 desugar :: Stmt String -> Expr String
 desugar ss =
