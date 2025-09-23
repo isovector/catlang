@@ -18,6 +18,11 @@ newtype Var = V { unVar :: String }
 instance Pretty Var where
   pPrint = text . unVar
 
+instance Pretty a => Pretty (Map Var a) where
+  pPrint m = vcat $ do
+    (v, a) <- M.toList m
+    pure $
+      hang (pPrint v <+> "=") 2 $ pPrint a
 
 programs :: Map Var (TopDecl Var)
 programs = M.fromList
@@ -61,6 +66,7 @@ run :: Var -> Val -> IO ()
 run v val = do
   let compiled = compileProg programs
       knotted = fmap (inline (compiled M.!)) compiled
+  print $ knotted M.! v
   print $ pPrint $ knotted M.! v
   putStrLn ""
   VFunc f <- pure $ eval $ knotted M.! v

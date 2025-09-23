@@ -36,7 +36,7 @@ instance Pretty Prim where
 
 
 data Expr a
-  = Var a
+  = Var !a
   | Prim Prim
   | Lit Lit
   | App (Expr a) (Expr a)

@@ -1,0 +1,193 @@
+{-# LANGUAGE TemplateHaskell      #-}
+{-# LANGUAGE UndecidableInstances #-}
+
+module Typecheck where
+
+import Data.Void
+import Control.Monad
+import Control.Monad.Trans.Except
+import Control.Monad.State
+import qualified Data.Map as M
+import Data.Map (Map)
+import Types
+import GHC.Generics
+import Data.Functor.Foldable
+import Data.Functor.Foldable.TH
+
+
+-- | 'With' is a can of paint over 'Cofree'. It associates an @a@ value at
+-- every node in an @f@-shaped tree.
+data With f a = With
+  { getSummary :: a
+  , getContext :: Base f (With f a)
+  }
+  deriving stock (Generic)
+
+
+deriving stock instance Functor (Base f) => Functor (With f)
+deriving stock instance Foldable (Base f) => Foldable (With f)
+deriving stock instance Traversable (Base f) => Traversable (With f)
+
+
+-- | Compute a 'With' by folding the summarized value at each point in the
+-- tree.
+summarize :: Recursive t => (Base t (With t x) -> x) -> t -> With t x
+summarize f = cata $ \b -> With (f b) b
+
+
+-- | Eliminate a 'With' by forgetting the summarized values.
+unsummarize :: Corecursive t => With t x -> t
+unsummarize (With _ t) = embed $ fmap unsummarize t
+
+
+-- | Like 'cata', except that it gives you access to the summarized value at
+-- each step.
+withCata :: Recursive t => (x -> Base t a -> a) -> With t x -> a
+withCata f (With x t) = f x $ fmap (withCata f) t
+
+
+type Name = String
+data Con
+  deriving stock (Eq, Ord, Show, Generic)
+
+data Type a
+  = Prod (Type a) (Type a)
+  | Coprod (Type a) (Type a)
+  | Arr (Type a) (Type a)
+  | TyCon Con
+  | TyVar Name
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Generic)
+
+makeBaseFunctor [''Type]
+
+newtype Subst = Subst { unSubst :: Map Name (Type Con)  }
+  deriving newtype (Eq, Ord, Show)
+
+class CanSubst a where
+  subst :: Subst -> a -> a
+
+instance CanSubst (Type Con) where
+  subst (Subst s) = cata $ \case
+    TyVarF a
+      | Just t <- M.lookup a s -> t
+    x -> embed x
+
+instance CanSubst a => CanSubst (Map k a) where
+  subst s = fmap (subst s)
+
+instance Semigroup Subst where
+  Subst t1 <> s@(Subst t2) = Subst $ subst s t1 <> t2
+
+instance Monoid Subst where
+  mempty = Subst mempty
+
+
+class CanUnify a where
+  mgu :: a -> a -> TcM a
+
+mgu' :: (CanUnify a, CanSubst a) => a -> a -> TcM a
+mgu' x y = do
+  s <- TcM $ gets tcm_subst
+  mgu (subst s x) (subst s y)
+
+instance CanUnify (Type Con) where
+  mgu (Prod x1 y1) (Prod x2 y2) =
+    Prod <$> mgu x1 x2 <*> mgu' y1 y2
+  mgu (Coprod x1 y1) (Coprod x2 y2) =
+    Coprod <$> mgu x1 x2 <*> mgu' y1 y2
+  mgu (Arr x1 y1) (Arr x2 y2) =
+    Arr <$> mgu x1 x2 <*> mgu' y1 y2
+  mgu (TyVar x) y = varBind x y
+  mgu y (TyVar x) = varBind x y
+  mgu x y = fail $ unwords
+    [ "Cannot unify"
+    , show x
+    , "with"
+    , show y
+    ]
+
+varBind :: Name -> Type Con -> TcM (Type Con)
+varBind n v =
+  TcM $ do
+    -- traceM $ unwords
+    --   [ "!!!binding:"
+    --   , show n
+    --   , "to"
+    --   , show v
+    --   ]
+    modify $ \s ->
+      s { tcm_subst = mappend (Subst $ M.singleton n v) $ tcm_subst s }
+    gets $ (M.! n) . unSubst . tcm_subst
+
+data TcMState = TcMState
+  { tcm_subst :: Subst
+  , tcm_fresh :: Int
+  }
+  deriving stock (Eq, Ord, Show)
+
+fresh :: TcM Name
+fresh = TcM $ do
+  x <- gets tcm_fresh
+  modify $ \s -> s { tcm_fresh = tcm_fresh s + 1 }
+  pure $ "$" <> show x
+
+
+newtype TcM a = TcM {unTcM :: ExceptT String (State TcMState) a}
+  deriving newtype (Functor, Applicative, Monad)
+
+
+instance MonadFail TcM where
+  fail = TcM . ExceptT . pure . Left
+
+
+unify :: Type Con -> Type Con -> TcM Subst
+unify x y = do
+  s <- TcM $ gets tcm_subst
+  void $ mgu (subst s x) (subst s y)
+  TcM $ gets tcm_subst
+
+
+infer :: Expr Void -> TcM (With (Expr Void) (Type Con))
+infer (AndThen x y) = do
+  x'@(With (Arr xin t1) _) <- infer x
+  y'@(With (Arr t2 yout) _) <- infer y
+  s <- unify t1 t2
+  pure $ With (subst s $ Arr xin yout) $ AndThenF x' y'
+infer (Prim Proj1) = do
+  t1 <- fmap TyVar fresh
+  t2 <- fmap TyVar fresh
+  pure $ With (Arr (Prod t1 t2) t1) $ PrimF Proj1
+infer (Prim Proj2) = do
+  t1 <- fmap TyVar fresh
+  t2 <- fmap TyVar fresh
+  pure $ With (Arr (Prod t1 t2) t2) $ PrimF Proj2
+infer (Prim Inl) = do
+  t1 <- fmap TyVar fresh
+  t2 <- fmap TyVar fresh
+  pure $ With (Arr t1 (Prod t1 t2)) $ PrimF Inl
+infer (Prim Inr) = do
+  t1 <- fmap TyVar fresh
+  t2 <- fmap TyVar fresh
+  pure $ With (Arr t2 (Prod t1 t2)) $ PrimF Inr
+infer (Fork x y) = do
+  x'@(With (Arr t1 xout) _) <- infer x
+  y'@(With (Arr t2 yout) _) <- infer y
+  s <- unify t1 t2
+  pure $ With (subst s $ Arr t1 (Prod xout yout)) $ ForkF x' y'
+infer (Join x y) = do
+  x'@(With (Arr xin t1) _) <- infer x
+  y'@(With (Arr yin t2) _) <- infer y
+  s <- unify t1 t2
+  pure $ With (subst s $ Arr (Coprod xin yin) t1) $ JoinF x' y'
+infer (Prim Id) = do
+  t1 <- fmap TyVar fresh
+  pure $ With (Arr t1 t1) $ PrimF Id
+infer (Prim Dist) = do
+  t1 <- fmap TyVar fresh
+  t2 <- fmap TyVar fresh
+  t3 <- fmap TyVar fresh
+  pure $ With (Arr (Prod (Coprod t1 t2) t3) (Coprod (Prod t1 t3) (Prod t2 t3))) $ PrimF Dist
+
+runTcM :: TcM a -> Either String a
+runTcM = flip evalState (TcMState mempty 0) . runExceptT . unTcM
+

@@ -25,7 +25,9 @@ source-repository head
 
 library
   exposed-modules:
+      Compile
       Eval
+      Test
       Types
   other-modules:
       Paths_catlang
