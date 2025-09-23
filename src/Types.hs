@@ -1,9 +1,11 @@
-{-# LANGUAGE BlockArguments    #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE BlockArguments       #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE TemplateHaskell      #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Types where
 
+import Numeric.Natural
 import           Data.Char (toUpper)
 import           Data.Data
 import           Data.Functor.Foldable.TH
@@ -15,6 +17,8 @@ import           Data.String
 import           Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 import           Text.Read (readMaybe)
 
+instance Pretty Natural where
+  pPrint = text . show
 
 data Prim
   = Inl    -- ^ a -> a + b
@@ -112,19 +116,24 @@ mapFirst :: (Char -> Char) -> String -> String
 mapFirst _ [] = []
 mapFirst f (c : cs) = f c : cs
 
+data LitTy
+  = StrTy
+  | CharTy
+  | NatTy
+  deriving stock (Eq, Ord, Show, Data, Typeable)
 
 data Lit
   = Unit
   | Str String
   | Char Char
-  | Num Integer
+  | Nat Natural
   deriving stock (Eq, Ord, Show, Data, Typeable)
 
 instance Pretty Lit where
   pPrint Unit = "!"
   pPrint (Str s) = pPrint s
   pPrint (Char c) = pPrint c
-  pPrint (Num i) = pPrint i
+  pPrint (Nat i) = pPrint i
 
 instance IsString Lit where
   fromString = Str
@@ -170,7 +179,7 @@ data Constraint
   | Initial
   | LitStr
   | LitChar
-  | LitNum
+  | LitNat
   deriving stock (Eq, Ord, Show, Data, Typeable)
 
 
@@ -186,6 +195,8 @@ instance Pretty a => Pretty (TopDecl a) where
 
 makeBaseFunctor [''Prim, ''Expr, ''Lit, ''Stmt, ''Constraint, ''Cmd]
 
+deriving stock instance (Show a, Show x) => Show (ExprF a x)
+
 
 primConstraints :: Data a => a -> Set Constraint
 primConstraints = everything (<>) $
@@ -200,7 +211,7 @@ primConstraints = everything (<>) $
     Unit -> S.singleton Terminal
     Str{} -> S.singleton LitStr
     Char{} -> S.singleton LitChar
-    Num{} -> S.singleton LitNum
+    Nat{} -> S.singleton LitNat
 
 
 (@@) :: Expr a -> Expr a -> Expr a

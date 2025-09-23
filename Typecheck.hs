@@ -1,5 +1,6 @@
-{-# LANGUAGE TemplateHaskell      #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 module Typecheck where
 
@@ -24,6 +25,11 @@ data With f a = With
   deriving stock (Generic)
 
 
+
+class Show (Base f x) => ShowBase f x
+instance Show (Base f x) => ShowBase f x
+
+deriving stock instance (Show x, forall y. Show y => ShowBase f y) => Show (With f x)
 deriving stock instance Functor (Base f) => Functor (With f)
 deriving stock instance Foldable (Base f) => Foldable (With f)
 deriving stock instance Traversable (Base f) => Traversable (With f)
@@ -47,26 +53,24 @@ withCata f (With x t) = f x $ fmap (withCata f) t
 
 
 type Name = String
-data Con
-  deriving stock (Eq, Ord, Show, Generic)
 
-data Type a
-  = Prod (Type a) (Type a)
-  | Coprod (Type a) (Type a)
-  | Arr (Type a) (Type a)
-  | TyCon Con
+data Type
+  = Prod Type Type
+  | Coprod Type Type
+  | Arr Type Type
+  | TyCon LitTy
   | TyVar Name
-  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
 
 makeBaseFunctor [''Type]
 
-newtype Subst = Subst { unSubst :: Map Name (Type Con)  }
+newtype Subst = Subst { unSubst :: Map Name Type  }
   deriving newtype (Eq, Ord, Show)
 
 class CanSubst a where
   subst :: Subst -> a -> a
 
-instance CanSubst (Type Con) where
+instance CanSubst Type where
   subst (Subst s) = cata $ \case
     TyVarF a
       | Just t <- M.lookup a s -> t
@@ -90,7 +94,7 @@ mgu' x y = do
   s <- TcM $ gets tcm_subst
   mgu (subst s x) (subst s y)
 
-instance CanUnify (Type Con) where
+instance CanUnify Type where
   mgu (Prod x1 y1) (Prod x2 y2) =
     Prod <$> mgu x1 x2 <*> mgu' y1 y2
   mgu (Coprod x1 y1) (Coprod x2 y2) =
@@ -106,7 +110,7 @@ instance CanUnify (Type Con) where
     , show y
     ]
 
-varBind :: Name -> Type Con -> TcM (Type Con)
+varBind :: Name -> Type -> TcM Type
 varBind n v =
   TcM $ do
     -- traceM $ unwords
@@ -140,14 +144,14 @@ instance MonadFail TcM where
   fail = TcM . ExceptT . pure . Left
 
 
-unify :: Type Con -> Type Con -> TcM Subst
+unify :: Type -> Type -> TcM Subst
 unify x y = do
   s <- TcM $ gets tcm_subst
   void $ mgu (subst s x) (subst s y)
   TcM $ gets tcm_subst
 
 
-infer :: Expr Void -> TcM (With (Expr Void) (Type Con))
+infer :: Expr Void -> TcM (With (Expr Void) Type)
 infer (AndThen x y) = do
   x'@(With (Arr xin t1) _) <- infer x
   y'@(With (Arr t2 yout) _) <- infer y
@@ -187,7 +191,17 @@ infer (Prim Dist) = do
   t2 <- fmap TyVar fresh
   t3 <- fmap TyVar fresh
   pure $ With (Arr (Prod (Coprod t1 t2) t3) (Coprod (Prod t1 t3) (Prod t2 t3))) $ PrimF Dist
+infer Lit{} = error "can't infer lits"
+infer App{} = error "can't infer apps"
 
-runTcM :: TcM a -> Either String a
-runTcM = flip evalState (TcMState mempty 0) . runExceptT . unTcM
+subbing :: CanSubst a => a -> TcM a
+subbing a = do
+  s <- TcM $ gets tcm_subst
+  pure $ subst s a
 
+
+instance (Functor (Base f), CanSubst a) => CanSubst (With f a) where
+  subst s = fmap (subst s)
+
+runTcM :: CanSubst a => TcM a -> Either String a
+runTcM = flip evalState (TcMState mempty 0) . runExceptT . unTcM . (subbing =<<)
