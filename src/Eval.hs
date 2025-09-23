@@ -28,17 +28,17 @@ instance IsString Val where
 
 
 eval :: Expr a -> Val
-eval (Prim Inl) = VFunc VInl
-eval (Prim Inr) = VFunc VInr
-eval (Prim Proj1) = VFunc $
+eval Inl = VFunc VInl
+eval Inr = VFunc VInr
+eval Proj1 = VFunc $
   \case
     VPair x _ -> x
     _ -> error "projection of a nonpair"
-eval (Prim Proj2) = VFunc $
+eval Proj2 = VFunc $
   \case
     VPair _ y -> y
     _ -> error "projection of a nonpair"
-eval (Prim Dist) = VFunc $
+eval Dist = VFunc $
   \case
     VPair (VInl a) c -> VInl (VPair a c)
     VPair (VInr b) c -> VInr (VPair b c)
@@ -57,7 +57,7 @@ eval (Join (eval -> VFunc f) (eval -> VFunc g)) =
     VInr a -> g a
     _ -> error "join of a nonsum"
 eval Join{} = error "bad join"
-eval (Prim Id) = VFunc id
+eval Id = VFunc id
 
 
 mkPair :: [Val] -> Val

@@ -157,22 +157,22 @@ infer (AndThen x y) = do
   y'@(With (Arr t2 yout) _) <- infer y
   s <- unify t1 t2
   pure $ With (subst s $ Arr xin yout) $ AndThenF x' y'
-infer (Prim Proj1) = do
+infer Proj1 = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
-  pure $ With (Arr (Prod t1 t2) t1) $ PrimF Proj1
-infer (Prim Proj2) = do
+  pure $ With (Arr (Prod t1 t2) t1) Proj1F
+infer Proj2 = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
-  pure $ With (Arr (Prod t1 t2) t2) $ PrimF Proj2
-infer (Prim Inl) = do
+  pure $ With (Arr (Prod t1 t2) t2) Proj2F
+infer Inl = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
-  pure $ With (Arr t1 (Prod t1 t2)) $ PrimF Inl
-infer (Prim Inr) = do
+  pure $ With (Arr t1 (Prod t1 t2)) InlF
+infer Inr = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
-  pure $ With (Arr t2 (Prod t1 t2)) $ PrimF Inr
+  pure $ With (Arr t2 (Prod t1 t2)) InrF
 infer (Fork x y) = do
   x'@(With (Arr t1 xout) _) <- infer x
   y'@(With (Arr t2 yout) _) <- infer y
@@ -183,16 +183,17 @@ infer (Join x y) = do
   y'@(With (Arr yin t2) _) <- infer y
   s <- unify t1 t2
   pure $ With (subst s $ Arr (Coprod xin yin) t1) $ JoinF x' y'
-infer (Prim Id) = do
+infer Id = do
   t1 <- fmap TyVar fresh
-  pure $ With (Arr t1 t1) $ PrimF Id
-infer (Prim Dist) = do
+  pure $ With (Arr t1 t1) $ IdF
+infer Dist = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
   t3 <- fmap TyVar fresh
-  pure $ With (Arr (Prod (Coprod t1 t2) t3) (Coprod (Prod t1 t3) (Prod t2 t3))) $ PrimF Dist
+  pure $ With (Arr (Prod (Coprod t1 t2) t3) (Coprod (Prod t1 t3) (Prod t2 t3))) DistF
 infer Lit{} = error "can't infer lits"
 infer App{} = error "can't infer apps"
+
 
 subbing :: CanSubst a => a -> TcM a
 subbing a = do
@@ -202,6 +203,7 @@ subbing a = do
 
 instance (Functor (Base f), CanSubst a) => CanSubst (With f a) where
   subst s = fmap (subst s)
+
 
 runTcM :: CanSubst a => TcM a -> Either String a
 runTcM = flip evalState (TcMState mempty 0) . runExceptT . unTcM . (subbing =<<)

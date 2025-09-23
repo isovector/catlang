@@ -5,55 +5,40 @@
 
 module Types where
 
+import Data.Char (toUpper)
+import Data.Data
+import Data.Functor.Foldable.TH
+import Data.String
 import Numeric.Natural
-import           Data.Char (toUpper)
-import           Data.Data
-import           Data.Functor.Foldable.TH
-import           Data.Generics.Aliases
-import           Data.Generics.Schemes
-import           Data.Set (Set)
-import qualified Data.Set as S
-import           Data.String
-import           Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
-import           Text.Read (readMaybe)
+import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
+import Text.Read (readMaybe)
+
 
 instance Pretty Natural where
   pPrint = text . show
 
-data Prim
-  = Inl    -- ^ a -> a + b
-  | Inr    -- ^ b -> a + b
-  | Proj1  -- ^ a * b -> a
-  | Proj2  -- ^ a * b -> b
-  | Id     -- ^ a -> a
-  | Dist   -- ^ (a + b) * c -> a * c + b * c
-  deriving stock (Eq, Ord, Show, Read, Data, Typeable)
-
-
-instance Pretty Prim where
-  pPrint Inl   = "inl"
-  pPrint Inr   = "inr"
-  pPrint Proj1 = "prj₁"
-  pPrint Proj2 = "prj₂"
-  pPrint Id    = "id"
-  pPrint Dist  = "dist"
 
 
 data Expr a
   = Var !a
-  | Prim Prim
   | Lit Lit
   | App (Expr a) (Expr a)
   | AndThen (Expr a) (Expr a)
   | Fork (Expr a) (Expr a)
   | Join (Expr a) (Expr a)
-  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
+  | Inl    -- ^ a -> a + b
+  | Inr    -- ^ b -> a + b
+  | Proj1  -- ^ a * b -> a
+  | Proj2  -- ^ a * b -> b
+  | Id     -- ^ a -> a
+  | Dist   -- ^ (a + b) * c -> a * c + b * c
+  deriving stock (Eq, Ord, Show, Read, Functor, Foldable, Traversable, Data, Typeable)
 
 instance Pretty a => Pretty (Expr a) where
   pPrintPrec l p (Index n) =
     maybeParens (p >= 10) $
       "idx" <+> pPrintPrec l p n
-  pPrintPrec l p (Push f :. Prim Dist :. k) =
+  pPrintPrec l p (Push f :. Dist :. k) =
     maybeParens (p >= 3) $
       ("branch" <+> pPrintPrec l 10 f) <+> "⨟" <+> pPrintPrec l 2 k
   pPrintPrec l p (Push f) =
@@ -63,7 +48,6 @@ instance Pretty a => Pretty (Expr a) where
   pPrintPrec l p (Var a) =
     maybeParens (p >= 10) $
       "call" <+> pPrintPrec l 10 a
-  pPrintPrec l p (Prim pr) = pPrintPrec l p pr
   pPrintPrec l p (Lit pr) = pPrintPrec l p pr
   pPrintPrec l p (App f a) =
     maybeParens (p >= 10) $
@@ -78,25 +62,31 @@ instance Pretty a => Pretty (Expr a) where
   pPrintPrec l p (Join f g) =
     maybeParens (p >= 5) $
       pPrintPrec l 5 f <+> "▽" <+> pPrintPrec l 5 g
+  pPrintPrec _ _ Inl   = "inl"
+  pPrintPrec _ _ Inr   = "inr"
+  pPrintPrec _ _ Proj1 = "prj₁"
+  pPrintPrec _ _ Proj2 = "prj₂"
+  pPrintPrec _ _ Id    = "id"
+  pPrintPrec _ _ Dist  = "dist"
 
-instance IsString a => IsString (Expr a) where
+instance (IsString a, Read a) => IsString (Expr a) where
   fromString s =
     case readMaybe $ mapFirst toUpper s of
-      Just p -> Prim p
+      Just p -> p
       Nothing -> Var $ fromString s
 
 pattern Push :: Expr a -> Expr a
-pattern Push f = Fork f (Prim Id)
+pattern Push f = Fork f Id
 
 pattern Index :: Int -> Expr a
 pattern Index n <- (countNs -> Just n)
-  where Index n = foldr AndThen (Prim Proj1) $ replicate n $ Prim Proj2
+  where Index n = foldr AndThen (Proj1) $ replicate n $ Proj2
 
 pattern (:.) :: Expr a -> Expr a -> Expr a
 pattern (:.)f g <- (split -> (f, g))
   where
-    (:.) f (Prim Id) = f
-    (:.) (Prim Id) f = f
+    (:.) f Id = f
+    (:.) Id f = f
     (:.) f g = AndThen f g
 infixr 0 :.
 
@@ -104,11 +94,11 @@ infixr 0 :.
 split :: Expr a -> (Expr a, Expr a)
 split (AndThen (AndThen f g) h) = fmap (flip AndThen $ AndThen g h) $ split f
 split (AndThen f g) = (f, g)
-split x = (x, Prim Id)
+split x = (x, Id)
 
 countNs :: Expr a -> Maybe Int
-countNs (Prim Proj2 :. e) = fmap (+ 1) $ countNs e
-countNs (Prim Proj1) = Just 0
+countNs (Proj2 :. e) = fmap (+ 1) $ countNs e
+countNs (Proj1) = Just 0
 countNs _ = Nothing
 
 
@@ -127,7 +117,7 @@ data Lit
   | Str String
   | Char Char
   | Nat Natural
-  deriving stock (Eq, Ord, Show, Data, Typeable)
+  deriving stock (Eq, Ord, Show, Read, Data, Typeable)
 
 instance Pretty Lit where
   pPrint Unit = "!"
@@ -172,17 +162,6 @@ prettyTuple [x] = pPrint x
 prettyTuple xs = parens $ hsep $ punctuate "," $ fmap pPrint xs
 
 
-data Constraint
-  = Cartesian
-  | Cocartesian
-  | Terminal
-  | Initial
-  | LitStr
-  | LitChar
-  | LitNat
-  deriving stock (Eq, Ord, Show, Data, Typeable)
-
-
 data TopDecl a
   = AnonArrow
       a  -- ^ Input name
@@ -193,25 +172,9 @@ instance Pretty a => Pretty (TopDecl a) where
     hang (pPrint a <+> "→") 2 $ pPrint b
 
 
-makeBaseFunctor [''Prim, ''Expr, ''Lit, ''Stmt, ''Constraint, ''Cmd]
+makeBaseFunctor [''Expr, ''Lit, ''Stmt, ''Cmd]
 
 deriving stock instance (Show a, Show x) => Show (ExprF a x)
-
-
-primConstraints :: Data a => a -> Set Constraint
-primConstraints = everything (<>) $
-  mkQ mempty \case
-    Inl -> S.singleton Cocartesian
-    Inr -> S.singleton Cocartesian
-    Proj1 -> S.singleton Cartesian
-    Proj2 -> S.singleton Cartesian
-    Id -> mempty
-    Dist -> S.fromList [Cartesian, Cocartesian]
-  `extQ` \case
-    Unit -> S.singleton Terminal
-    Str{} -> S.singleton LitStr
-    Char{} -> S.singleton LitChar
-    Nat{} -> S.singleton LitNat
 
 
 (@@) :: Expr a -> Expr a -> Expr a

@@ -22,14 +22,14 @@ newtype AllocM v a = AllocM { unAllocM :: StateT (Map v (Expr v)) (Writer [Expr 
 
 
 stackSucc :: AllocM v ()
-stackSucc = AllocM $ modify $ fmap $ AndThen $ Prim Proj2
+stackSucc = AllocM $ modify $ fmap $ AndThen Proj2
 
 
 alloc :: Ord v => v -> Expr v -> AllocM v ()
 alloc v e = AllocM $ do
-  tell $ pure $ Fork e (Prim Id)
+  tell $ pure $ Fork e Id
   unAllocM stackSucc
-  modify $ M.insert v $ Prim Proj1
+  modify $ M.insert v Proj1
 
 inform :: Ord v => v -> Expr v -> AllocM v ()
 inform v e = AllocM $ modify $ M.insert v e
@@ -65,16 +65,16 @@ compileCmd allocs (Case a (x, l) (y, r)) = do
   l' <-
     isolate $ do
       stackSucc
-      inform x $ Prim Proj1
+      inform x Proj1
       compileStmt allocs l
   r' <-
     isolate $ do
       stackSucc
-      inform y $ Prim Proj1
+      inform y Proj1
       compileStmt allocs r
   pure $ foldr1 AndThen
-    [ Fork a' $ Prim Id
-    , Prim Dist
+    [ Fork a' Id
+    , Dist
     , Join l' r'
     ]
 compileCmd _ (Do e xs) = do
@@ -102,7 +102,7 @@ desugar (AnonArrow input ss) =
       needs_alloc = M.keysSet $ M.filter (> 1) counts
       (out, binds)
         = runWriter
-        $ flip evalStateT (M.singleton input $ Prim Id)
+        $ flip evalStateT (M.singleton input Id)
         $ unAllocM
         $ compileStmt needs_alloc ss
   in quotient $ foldr AndThen out binds
@@ -114,10 +114,10 @@ compileProg = fmap desugar
 
 quotient :: Expr a -> Expr a
 quotient = cata \case
-  AndThenF (Prim Id) x -> x
-  AndThenF x (Prim Id) -> x
-  AndThenF (Fork f _) (Prim Proj1 :. k) -> f :. k
-  AndThenF (Fork _ g) (Prim Proj2 :. k) -> g :. k
+  AndThenF Id x -> x
+  AndThenF x Id -> x
+  AndThenF (Fork f _) (Proj1 :. k) -> f :. k
+  AndThenF (Fork _ g) (Proj2 :. k) -> g :. k
   x -> embed x
 
 

@@ -12,7 +12,7 @@ import           Types
 
 
 newtype Var = V { unVar :: String }
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show, Read)
   deriving newtype IsString
 
 instance Pretty Var where
