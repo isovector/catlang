@@ -26,12 +26,14 @@ data Expr a
   | AndThen (Expr a) (Expr a)
   | Fork (Expr a) (Expr a)
   | Join (Expr a) (Expr a)
-  | Inl    -- ^ a -> a + b
-  | Inr    -- ^ b -> a + b
-  | Proj1  -- ^ a * b -> a
-  | Proj2  -- ^ a * b -> b
-  | Id     -- ^ a -> a
-  | Dist   -- ^ (a + b) * c -> a * c + b * c
+  | Inl                -- ^ a ~> a + b
+  | Inr                -- ^ b ~> a + b
+  | Proj1              -- ^ a * b ~> a
+  | Proj2              -- ^ a * b ~> b
+  | Id                 -- ^ a ~> a
+  | Dist               -- ^ (a + b) * c ~> a * c + b * c
+  | Costrong (Expr a)  -- ^ (a * x ~> b * x) -> (a ~> b)
+  | Cochoice (Expr a)  -- ^ (a + x ~> b + x) -> (a ~> b)
   deriving stock (Eq, Ord, Show, Read, Functor, Foldable, Traversable, Data, Typeable)
 
 instance Pretty a => Pretty (Expr a) where
@@ -68,6 +70,13 @@ instance Pretty a => Pretty (Expr a) where
   pPrintPrec _ _ Proj2 = "prj₂"
   pPrintPrec _ _ Id    = "id"
   pPrintPrec _ _ Dist  = "dist"
+  pPrintPrec _ _ Id    = "id"
+  pPrintPrec l _ (Costrong f) =
+    parens $
+      "costrong" <+> pPrintPrec l 10 f
+  pPrintPrec l _ (Cochoice f) =
+    parens $
+      "cochoice" <+> pPrintPrec l 10 f
 
 instance (IsString a, Read a) => IsString (Expr a) where
   fromString s =

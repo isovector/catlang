@@ -1,4 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings                    #-}
+-- for the implementation of costrong
+{-# OPTIONS_GHC -fno-warn-incomplete-uni-patterns #-}
 
 module Eval where
 
@@ -58,6 +60,20 @@ eval (Join (eval -> VFunc f) (eval -> VFunc g)) =
     _ -> error "join of a nonsum"
 eval Join{} = error "bad join"
 eval Id = VFunc id
+eval (Cochoice (eval -> VFunc f)) =
+  VFunc $
+    let go = \case
+          VInl a -> a
+          VInr b -> go $ f b
+          _ -> error "cochoice of a noncoprod"
+     in go
+eval Cochoice{} = error "bad cochoice"
+eval (Costrong (eval -> VFunc f)) =
+  VFunc $ \a ->
+    let ~(VPair b ~x) = f (VPair a x)
+    in b
+eval Costrong{} = error "bad strong"
+
 
 
 mkPair :: [Val] -> Val
