@@ -118,14 +118,12 @@ instance Pretty LitTy where
   pPrint NatTy = "Nat"
 
 data Lit
-  = Unit
-  | Str String
+  = Str String
   | Char Char
   | Nat Natural
   deriving stock (Eq, Ord, Show, Read, Data, Typeable)
 
 instance Pretty Lit where
-  pPrint Unit = "!"
   pPrint (Str s) = pPrint s
   pPrint (Char c) = pPrint c
   pPrint (Nat i) = pPrint i

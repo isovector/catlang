@@ -205,8 +205,11 @@ infer Dist = do
   t2 <- fmap TyVar fresh
   t3 <- fmap TyVar fresh
   pure $ With (Arr (Prod (Coprod t1 t2) t3) (Coprod (Prod t1 t3) (Prod t2 t3))) DistF
-infer Lit{} = error "can't infer lits"
+infer (Lit (Str s)) = pure $ With (TyCon StrTy) $ LitF $ Str s
+infer (Lit (Char c)) = pure $ With (TyCon CharTy) $ LitF $ Char c
+infer (Lit (Nat n)) = pure $ With (TyCon NatTy) $ LitF $ Nat n
 infer App{} = error "can't infer apps"
+infer Var{} = error "can't infer var"
 
 
 subbing :: CanSubst a => a -> TcM a
