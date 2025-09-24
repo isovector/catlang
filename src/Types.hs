@@ -18,7 +18,6 @@ instance Pretty Natural where
   pPrint = text . show
 
 
-
 data Expr a
   = Var !a
   | Lit Lit
