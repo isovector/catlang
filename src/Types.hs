@@ -70,7 +70,6 @@ instance Pretty a => Pretty (Expr a) where
   pPrintPrec _ _ Proj2 = "prj₂"
   pPrintPrec _ _ Id    = "id"
   pPrintPrec _ _ Dist  = "dist"
-  pPrintPrec _ _ Id    = "id"
   pPrintPrec l _ (Costrong f) =
     parens $
       "costrong" <+> pPrintPrec l 10 f

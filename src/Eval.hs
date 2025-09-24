@@ -70,7 +70,7 @@ eval (Cochoice (eval -> VFunc f)) =
 eval Cochoice{} = error "bad cochoice"
 eval (Costrong (eval -> VFunc f)) =
   VFunc $ \a ->
-    let ~(VPair b ~x) = f (VPair a x)
+    let ~(VPair b x) = f (VPair a x)
     in b
 eval Costrong{} = error "bad strong"
 
