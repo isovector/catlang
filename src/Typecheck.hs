@@ -1,10 +1,11 @@
+{-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Typecheck where
 
-import Data.Void
+import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 import Control.Monad
 import Control.Monad.Trans.Except
 import Control.Monad.State
@@ -63,6 +64,19 @@ data Type
   deriving stock (Eq, Ord, Show, Generic)
 
 makeBaseFunctor [''Type]
+
+instance Pretty Type where
+  pPrintPrec l p (Prod x y) =
+    maybeParens (p > 5) $
+      pPrintPrec l 6 x <+> "×" <+> pPrintPrec l 6 y
+  pPrintPrec l p (Coprod x y) =
+    maybeParens (p > 3) $
+      pPrintPrec l 4 x <+> "+" <+> pPrintPrec l 4 y
+  pPrintPrec l p (Arr x y) =
+    maybeParens (p > 0) $
+      pPrintPrec l 1 x <+> "→" <+> pPrintPrec l 0 y
+  pPrintPrec _ _ (TyCon t) = pPrint t
+  pPrintPrec _ _ (TyVar t) = text t
 
 newtype Subst = Subst { unSubst :: Map Name Type  }
   deriving newtype (Eq, Ord, Show)
@@ -151,7 +165,7 @@ unify x y = do
   TcM $ gets tcm_subst
 
 
-infer :: Expr Void -> TcM (With (Expr Void) Type)
+infer :: Expr a -> TcM (With (Expr a) Type)
 infer (AndThen x y) = do
   x'@(With (Arr xin t1) _) <- infer x
   y'@(With (Arr t2 yout) _) <- infer y

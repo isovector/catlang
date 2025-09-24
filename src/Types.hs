@@ -35,15 +35,15 @@ data Expr a
   deriving stock (Eq, Ord, Show, Read, Functor, Foldable, Traversable, Data, Typeable)
 
 instance Pretty a => Pretty (Expr a) where
-  pPrintPrec l p (Index n) =
-    maybeParens (p >= 10) $
-      "idx" <+> pPrintPrec l p n
-  pPrintPrec l p (Push f :. Dist :. k) =
-    maybeParens (p >= 3) $
-      ("branch" <+> pPrintPrec l 10 f) <+> "⨟" <+> pPrintPrec l 2 k
-  pPrintPrec l p (Push f) =
-    maybeParens (p >= 10) $
-      "push" <+> pPrintPrec l 10 f
+  -- pPrintPrec l p (Index n) =
+  --   maybeParens (p >= 10) $
+  --     "idx" <+> pPrintPrec l p n
+  -- pPrintPrec l p (Push f :. Dist :. k) =
+  --   maybeParens (p >= 3) $
+  --     ("branch" <+> pPrintPrec l 10 f) <+> "⨟" <+> pPrintPrec l 2 k
+  -- pPrintPrec l p (Push f) =
+  --   maybeParens (p >= 10) $
+  --     "push" <+> pPrintPrec l 10 f
 
   pPrintPrec l p (Var a) =
     maybeParens (p >= 10) $
@@ -111,6 +111,11 @@ data LitTy
   | CharTy
   | NatTy
   deriving stock (Eq, Ord, Show, Data, Typeable)
+
+instance Pretty LitTy where
+  pPrint StrTy = "String"
+  pPrint CharTy = "Char"
+  pPrint NatTy = "Nat"
 
 data Lit
   = Unit

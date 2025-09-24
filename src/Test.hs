@@ -8,6 +8,7 @@ import qualified Data.Map as M
 import           Data.String
 import           Eval
 import           Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
+import           Typecheck
 import           Types
 
 
@@ -23,6 +24,7 @@ instance Pretty a => Pretty (Map Var a) where
     (v, a) <- M.toList m
     pure $
       hang (pPrint v <+> "=") 2 $ pPrint a
+
 
 programs :: Map Var (TopDecl Var)
 programs = M.fromList
@@ -66,10 +68,13 @@ run :: Var -> Val -> IO ()
 run v val = do
   let compiled = compileProg programs
       knotted = fmap (inline (compiled M.!)) compiled
-  print $ knotted M.! v
-  print $ pPrint $ knotted M.! v
+      prog = knotted M.! v
+
+  print $ pPrint prog
   putStrLn ""
-  VFunc f <- pure $ eval $ knotted M.! v
+  print $ pPrint $ either error getSummary $ runTcM $ infer prog
+  putStrLn ""
+  VFunc f <- pure $ eval prog
   print $ pPrint $ f val
 
 
