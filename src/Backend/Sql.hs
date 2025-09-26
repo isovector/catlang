@@ -27,7 +27,7 @@ data Sql' a
   | LetBound a
   | CrossJoin (Sql' a) (Sql' a)
   | Union (Sql' a) (Sql' a)
-  | RawSelect String (Sql' a)
+  | RawSelect String String (Sql' a)
   | Input
   | Comment String (Sql' a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
@@ -75,12 +75,21 @@ prettySql (Select fs s) =
     , "FROM"
     , parens $ prettySql s
     ]
-prettySql (RawSelect str sql) =
+prettySql (RawSelect str "" sql) =
   sep
     [ "SELECT"
     , text str
     , "FROM"
     , parens $ prettySql sql
+    ]
+prettySql (RawSelect str wher sql) =
+  sep
+    [ "SELECT"
+    , text str
+    , "FROM"
+    , parens $ prettySql sql
+    , "WHERE"
+    , text wher
     ]
 prettySql (Filter [] s) = prettySql s
 prettySql (Filter ws s) =
@@ -92,7 +101,7 @@ prettySql (Filter ws s) =
     , sep $ punctuate " AND" $ ws <&> \w -> text w <+> "IS NOT NULL"
     ]
 prettySql (LetBound n) = "t" <> pPrint n
-prettySql Input = "SELECT 1 as f0, 2 as f1"
+prettySql Input = "SELECT -5 as f0, 2 as f1"
 prettySql (Let n x y) =
   sep
     [ "WITH" <+> ("t" <> pPrint n) <+> "AS"
@@ -179,7 +188,18 @@ sqlAlg (Arr (enumerate . toFields -> FCopair x y) _) (JoinF f g) =
         (runSqlBuilder (g <> toCanonical y) $ Filter (toList y) $ LetBound ())
 sqlAlg _ JoinF{} = error "bad join"
 sqlAlg _ (PrimF Add) = SqlBuilder $
-  RawSelect "f0 + f1 AS f0"
+  RawSelect "f0 + f1 AS f0" ""
+sqlAlg _ (PrimF Sub) = SqlBuilder $
+  RawSelect "f0 - f1 AS f0" ""
+sqlAlg _ (PrimF Abs) = SqlBuilder $
+  \sql ->
+    let_ () sql $
+      Union
+        (RawSelect "abs(f0) as f0, NULL as f1" "f0 < 0" $ LetBound ())
+        (RawSelect "NULL as f0, f0 as f1" "f0 >= 0" $ LetBound ())
+
+
+  -- RawSelect "f0 - f1 AS f0" ""
 sqlAlg
   (Arr
     (enumerate . toFields -> FPair (FCopair ina inb) inc)
@@ -229,9 +249,8 @@ renameLets =
 
 example :: Expr ()
 example = foldr1 AndThen
-  [ Fork (AndThen Proj1 Inl) Proj2
-  , Dist
-  , Join (Prim Add) Proj1
+  [ Proj2
+  , Prim Abs
   ]
 
 main :: IO ()

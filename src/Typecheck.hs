@@ -167,8 +167,8 @@ unify x y = do
   TcM $ gets tcm_subst
 
 
-natTy :: Type
-natTy = TyCon NatTy
+intTy :: Type
+intTy = TyCon IntTy
 
 infer :: Expr a -> TcM (With (Expr a) Type)
 infer (AndThen x y) = do
@@ -226,11 +226,15 @@ infer (Costrong f) = do
   pure $ With (subst s $ Arr t1 t2) $ CostrongF f'
 infer (Lit (Str s)) = pure $ With (TyCon StrTy) $ LitF $ Str s
 infer (Lit (Char c)) = pure $ With (TyCon CharTy) $ LitF $ Char c
-infer (Lit (Nat n)) = pure $ With (TyCon NatTy) $ LitF $ Nat n
+infer (Lit (Int n)) = pure $ With (TyCon IntTy) $ LitF $ Int n
 infer App{} = error "can't infer apps"
 infer Var{} = error "can't infer var"
 infer (Prim Add) =
-  pure $ With (Arr (Prod natTy natTy) natTy) $ PrimF Add
+  pure $ With (Arr (Prod intTy intTy) intTy) $ PrimF Add
+infer (Prim Sub) =
+  pure $ With (Arr (Prod intTy intTy) intTy) $ PrimF Sub
+infer (Prim Abs) =
+  pure $ With (Arr intTy (Coprod intTy intTy)) $ PrimF Abs
 
 
 subbing :: CanSubst a => a -> TcM a

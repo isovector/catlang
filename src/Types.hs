@@ -17,7 +17,10 @@ instance Pretty Natural where
   pPrint = text . show
 
 
-data Prim = Add
+data Prim
+  = Add
+  | Sub
+  | Abs -- Int → Int + Int, returning inl (abs) if the input was negative, otherwise inr
   deriving stock (Eq, Ord, Show, Read)
 
 
@@ -80,6 +83,8 @@ instance Pretty a => Pretty (Expr a) where
     parens $
       "cochoice" <+> pPrintPrec l 10 f
   pPrintPrec _ _ (Prim Add) = "(+)"
+  pPrintPrec _ _ (Prim Sub) = "(-)"
+  pPrintPrec _ _ (Prim Abs) = "abs"
 
 instance (IsString a, Read a) => IsString (Expr a) where
   fromString s =
@@ -121,24 +126,24 @@ mapFirst f (c : cs) = f c : cs
 data LitTy
   = StrTy
   | CharTy
-  | NatTy
+  | IntTy
   deriving stock (Eq, Ord, Show)
 
 instance Pretty LitTy where
   pPrint StrTy = "String"
   pPrint CharTy = "Char"
-  pPrint NatTy = "Nat"
+  pPrint IntTy = "Int"
 
 data Lit
   = Str String
   | Char Char
-  | Nat Natural
+  | Int Int
   deriving stock (Eq, Ord, Show, Read)
 
 instance Pretty Lit where
   pPrint (Str s) = pPrint s
   pPrint (Char c) = pPrint c
-  pPrint (Nat i) = pPrint i
+  pPrint (Int i) = pPrint i
 
 instance IsString Lit where
   fromString = Str
