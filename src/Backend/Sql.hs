@@ -1,9 +1,14 @@
+{-# LANGUAGE BlockArguments    #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module Backend.Sql where
 
+import Unsafe.Coerce
 import System.Process (readProcess)
 import Data.Functor
+import Data.Functor.Foldable
+import Data.Functor.Foldable.TH
 import Data.Foldable
 import Control.Monad.State
 import Control.Arrow ((&&&))
@@ -13,6 +18,20 @@ import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 import Types
 
 type FieldName = String
+
+data Sql' a
+  = Select [(FieldName, Maybe FieldName)] (Sql' a)
+  | Filter [FieldName] (Sql' a)
+  | Let a (Sql' a) (Sql' a)
+  | LetBound a
+  | CrossJoin (Sql' a) (Sql' a)
+  | Union (Sql' a) (Sql' a)
+  | RawSelect String (Sql' a)
+  | Input
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+makeBaseFunctor [''Sql']
+
 
 data Fields a
   = FPair (Fields a) (Fields a)
@@ -41,18 +60,13 @@ enumerate :: Traversable f => f a -> f FieldName
 enumerate = fmap field . flip evalState 0 . traverse (const next)
 
 
-data Sql
-  = Select [(FieldName, Maybe FieldName)] Sql
-  | Filter [FieldName] Sql
-  | Let Sql Sql
-  | LetBound
-  | CrossJoin Sql Sql
-  | Union Sql Sql
-  | RawSelect String Sql
-  | Input
-  deriving stock (Eq, Ord, Show)
+type Sql = Sql' ()
 
-prettySql :: Sql -> Doc
+
+
+
+
+prettySql :: Sql' Int -> Doc
 prettySql (Select fs s) =
   sep
     [ "SELECT"
@@ -78,26 +92,26 @@ prettySql (Filter ws s) =
     , "WHERE"
     , hsep $ punctuate " AND" $ ws <&> \w -> text w <+> "IS NOT NULL"
     ]
-prettySql LetBound = "t"
+prettySql (LetBound n) = "t" <> pPrint n
 prettySql Input = "SELECT 1 as f0"
-prettySql (Let x y) =
-  vcat
-    [ "WITH" <+> "t" <+> "AS"
+prettySql (Let n x y) =
+  sep
+    [ "WITH" <+> ("t" <> pPrint n) <+> "AS"
     , parens $ prettySql x
     , prettySql y
     ]
 prettySql (CrossJoin x y) =
-  vcat
+  sep
     [ "SELECT * FROM"
     , parens $ prettySql x
     , "CROSS JOIN"
     , parens $ prettySql y
     ]
 prettySql (Union x y) =
-  vcat
-    [ "SELECT * FROM" <+> parens (prettySql x)
+  sep
+    [ sep ["SELECT *", "FROM" <+> parens (prettySql x) ]
     , "UNION"
-    , "SELECT * FROM" <+> parens (prettySql y)
+    , sep ["SELECT *", "FROM" <+> parens (prettySql y) ]
     ]
 
 newtype SqlBuilder = SqlBuilder
@@ -138,10 +152,10 @@ sqlAlg _ Proj2F = error "bad type"
 sqlAlg _ (AndThenF f g) = g <> f
 sqlAlg (Arr _ (enumerate . toFields -> FPair x y)) (ForkF f g) =
   SqlBuilder $ \input ->
-    Let input $
+    Let () input $
       CrossJoin
-        (runSqlBuilder (fromCanonical x <> f) LetBound)
-        (runSqlBuilder (fromCanonical y <> g) LetBound)
+        (runSqlBuilder (fromCanonical x <> f) $ LetBound ())
+        (runSqlBuilder (fromCanonical y <> g) $ LetBound ())
 sqlAlg _ ForkF{} = error "bad type"
 sqlAlg (Arr _ (enumerate . toFields -> FCopair x y)) InlF =
   SqlBuilder $ Select $ toList $ FCopair (fmap (id &&& Just) x) (fmap (, Nothing) y)
@@ -152,20 +166,33 @@ sqlAlg (Arr _ (enumerate . toFields -> FCopair x y)) InrF =
 sqlAlg _ InrF = error "bad inr"
 sqlAlg (Arr (enumerate . toFields -> FCopair x y) _) (JoinF f g) =
   SqlBuilder $ \sql ->
-    Let sql $
+    Let () sql $
       Union
-        (runSqlBuilder (f <> toCanonical x) $ Filter (toList x) LetBound)
-        (runSqlBuilder (g <> toCanonical y) $ Filter (toList y) LetBound)
+        (runSqlBuilder (f <> toCanonical x) $ Filter (toList x) $ LetBound ())
+        (runSqlBuilder (g <> toCanonical y) $ Filter (toList y) $ LetBound ())
 sqlAlg _ JoinF{} = error "bad join"
 sqlAlg _ (PrimF Add) = SqlBuilder $
   RawSelect "f0 + f1 AS f0"
 
 
+-- | Induce a debruijn ordering on the let-binds of a sql. These are carefully
+-- constructed so that variables only ever reference their immediate binder, so
+-- we can cheat and implement it as an ana.
+renameLets :: Sql' a -> Sql' Int
+renameLets =
+  ana (uncurry $ \n -> \case
+    Let _ x y ->
+      LetF (n + 1) (n, x) (n + 1, y)
+    LetBound _ -> LetBoundF n
+    x -> unsafeCoerce $ fmap (n,) $ project x
+    ) . (0, )
+
+
 example :: Expr ()
-example = AndThen Inr (Join (AndThen (Fork Id Id) (Prim Add)) Id)
+example = AndThen Inl (Join (AndThen (Fork Id Id) (Prim Add)) Id)
 
 main :: IO String
 main = do
-  let sql = flip mappend ";" $ show $ prettySql $ runSqlBuilder (withCata sqlAlg exampleS) Input
+  let sql = flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (withCata sqlAlg exampleS) Input
   putStrLn sql
   readProcess "sqlite3" [] sql
