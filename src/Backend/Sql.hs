@@ -25,11 +25,18 @@ data Sql' a
   | Filter [FieldName] (Sql' a)
   | Let a (Sql' a) (Sql' a)
   | LetBound a
+  | Recursion a
+      (Sql' a)
+      -- ^ base case
+      (Sql' a)
+      -- ^ recursive case
+  | RecursionBound a
   | CrossJoin (Sql' a) (Sql' a)
   | Union (Sql' a) (Sql' a)
   | RawSelect String String (Sql' a)
   | Input
   | Comment String (Sql' a)
+  | AddColumns String (Sql' a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 type Sql = Sql' ()
@@ -64,67 +71,102 @@ enumerate :: Traversable f => f a -> f FieldName
 enumerate = fmap field . flip evalState 0 . traverse (const next)
 
 
+wrap :: Sql' Int -> Doc
+wrap s = sep
+  [ "SELECT *"
+  , "FROM"
+  , from s
+  , "AS _"
+  ]
+
+from :: Sql' Int -> Doc
+from a@(LetBound{}) = prettySql a
+from a@(RecursionBound{}) = prettySql a
+from a = parens $ prettySql a
+
 
 prettySql :: Sql' Int -> Doc
+prettySql (AddColumns s sql) =
+  sep
+    [ "SELECT"
+    , text s
+    , ", *"
+    , "FROM"
+    , from sql
+    , "AS _"
+    ]
 prettySql (Select fs s) =
   sep
     [ "SELECT"
     , hsep $ punctuate "," $ do
         (f, val) <- sortOn fst fs
-        pure $ maybe "NULL" text val <+> "AS" <+> text f
+        pure $ maybe "NULL::integer" text val <+> "AS" <+> text f
     , "FROM"
-    , parens $ prettySql s
+    , from s
+    , "AS _"
     ]
 prettySql (RawSelect str "" sql) =
   sep
     [ "SELECT"
     , text str
     , "FROM"
-    , parens $ prettySql sql
+    , from sql
+    , "AS _"
     ]
 prettySql (RawSelect str wher sql) =
   sep
     [ "SELECT"
     , text str
     , "FROM"
-    , parens $ prettySql sql
+    , from sql
+    , "AS _"
     , "WHERE"
     , text wher
     ]
 prettySql (Filter [] s) = prettySql s
 prettySql (Filter ws s) =
   sep
-    [ "SELECT *"
-    , "FROM"
-    , parens $ prettySql s
+    [ wrap s
     , "WHERE"
     , sep $ punctuate " AND" $ ws <&> \w -> text w <+> "IS NOT NULL"
     ]
 prettySql (LetBound n) = "t" <> pPrint n
-prettySql Input = "SELECT -5 as f0, 2 as f1"
+prettySql Input = "SELECT 0 as f0, 2 as f1"
 prettySql (Let n x y) =
   sep
     [ "WITH" <+> ("t" <> pPrint n) <+> "AS"
-    , parens $ prettySql x
-    , hang ("SELECT * FROM") 2 $ parens $ prettySql y
+    , parens $ wrap x
+    , wrap y
     ]
 prettySql (CrossJoin x y) =
   sep
-    [ hang ("SELECT * FROM") 2 $ parens $ prettySql x
+    [ wrap x
     , "CROSS JOIN"
     , parens $ prettySql y
     ]
 prettySql (Union x y) =
   sep
-    [ hang ("SELECT * FROM") 2 $ parens $ prettySql x
+    [ wrap x
     , "UNION"
-    , hang ("SELECT * FROM") 2 $ parens $ prettySql y
+    , wrap y
     ]
-prettySql (Comment _ y) = prettySql y
-  -- vcat
-  --   [ "--" <+> text x
-  --   , prettySql y
-  --   ]
+prettySql (Comment x y) =
+  vcat
+    [ "--" <+> text x
+    , prettySql y
+    ]
+prettySql (Recursion a base rec) =
+  sep
+    [ "WITH RECURSIVE recursion AS"
+    , parens $
+        sep
+          [ prettySql base
+          , "UNION ALL"
+          , prettySql rec
+          ]
+    , "SELECT * FROM recursion ORDER BY step DESC LIMIT 1"
+    ]
+prettySql (RecursionBound _) = "recursion"
 
 newtype SqlBuilder = SqlBuilder
   { runSqlBuilder :: Sql -> Sql
@@ -151,7 +193,7 @@ fromCanonical fs = SqlBuilder $ Select $ do
   zip l $ fmap Just $ enumerate l
 
 
-sqlAlg :: Type -> ExprF b (Type, SqlBuilder) -> (Type, SqlBuilder)
+sqlAlg :: Type -> ExprF () (Type, SqlBuilder) -> (Type, SqlBuilder)
 sqlAlg ty IdF = (ty,) $ mempty
 sqlAlg ty@(Arr (enumerate . toFields -> FPair p1 _) _) Proj1F
   = (ty,) $ toCanonical p1
@@ -195,8 +237,8 @@ sqlAlg ty (PrimF Abs) = (ty,) $ SqlBuilder $
   \sql ->
     let_ () sql $
       Union
-        (RawSelect "abs(f0) as f0, NULL as f1" "f0 < 0" $ LetBound ())
-        (RawSelect "NULL as f0, f0 as f1" "f0 >= 0" $ LetBound ())
+        (RawSelect "abs(f0) as f0, NULL::integer as f1" "f0 < 0" $ LetBound ())
+        (RawSelect "NULL::integer as f0, f0 as f1" "f0 >= 0" $ LetBound ())
 sqlAlg
   ty@(Arr
     (enumerate . toFields -> FPair (FCopair ina inb) inc)
@@ -224,6 +266,19 @@ sqlAlg
             )
             $ Filter (toList inb) $ LetBound ())
 sqlAlg _ DistF{} = error "bad dist"
+sqlAlg ty
+  (CochoiceF
+    (Arr (id &&& (enumerate . toFields) -> (Coprod a x, FCopair ain xin))
+         (enumerate . toFields -> FCopair bout xout), f)) =
+  (ty,) $ SqlBuilder $ \sql ->
+    runSqlBuilder (toCanonical bout) $
+      Filter (toList bout) $ runSqlBuilder f $
+      Recursion ()
+        (AddColumns "clock_timestamp() as step" $ runSqlBuilder (f <> snd (sqlAlg (Arr a (Coprod a x)) InlF)) sql)
+        ( AddColumns "clock_timestamp() as step" $ Filter (toList xout) $ runSqlBuilder f $ RecursionBound ()
+        )
+sqlAlg ty (LitF (Int n)) = (ty,) $ SqlBuilder $ RawSelect (show n <> " as f0") ""
+sqlAlg ty x = error $ "!!! MISSING CASE: " <> show (ty, () <$ x)
 
 
 let_ :: a -> Sql' a -> Sql' a -> Sql' a
@@ -261,7 +316,12 @@ example = Cochoice $
         , Prim Add
         , Inr
         ]
-        ) (AndThen Proj2 Inl)
+        ) $ foldr1 AndThen
+        [ Proj2
+        , Fork Id Id
+        , Prim Add
+        , Inl
+        ]
     ]
 
 main :: IO ()
@@ -270,11 +330,12 @@ main = do
   putStrLn ""
   print $ pPrint $ getSummary exampleS
   let sql = flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (snd $ withCata sqlAlg exampleS) Input
-  putStrLn ""
-  putStrLn sql
-  putStrLn ""
-  z <- readProcess "sqlite3" [] $ unlines
-    [ ".headers ON"
-    , sql
-    ]
-  putStrLn z
+  -- putStrLn ""
+  -- putStrLn sql
+  writeFile "/tmp/wat" sql
+  -- putStrLn ""
+  -- z <- readProcess "sqlite3" [] $ unlines
+  --   [ ".headers ON"
+  --   , sql
+  --   ]
+  -- putStrLn z
