@@ -151,61 +151,58 @@ fromCanonical fs = SqlBuilder $ Select $ do
   zip l $ fmap Just $ enumerate l
 
 
-sqlAlg :: Type -> ExprF b SqlBuilder -> SqlBuilder
-sqlAlg _ IdF = mempty
-sqlAlg (Arr ty _) Proj1F
-  | FPair p1 _ <- enumerate $ toFields ty
-  = toCanonical p1
+sqlAlg :: Type -> ExprF b (Type, SqlBuilder) -> (Type, SqlBuilder)
+sqlAlg ty IdF = (ty,) $ mempty
+sqlAlg ty@(Arr (enumerate . toFields -> FPair p1 _) _) Proj1F
+  = (ty,) $ toCanonical p1
 sqlAlg _ Proj1F = error "bad type"
-sqlAlg (Arr ty _) Proj2F
-  | FPair _ p2 <- enumerate $ toFields ty
-  = toCanonical p2
+sqlAlg ty@(Arr (enumerate . toFields -> FPair _ p2) _) Proj2F
+  = (ty,) $ toCanonical p2
 sqlAlg _ Proj2F = error "bad type"
-sqlAlg _ (AndThenF f g) = g <> f
-sqlAlg (Arr _ (enumerate . toFields -> FPair x y)) (ForkF f g) =
+sqlAlg ty (AndThenF f g) = (ty,) $ snd g <> snd f
+sqlAlg ty@(Arr _ (enumerate . toFields -> FPair x y)) (ForkF f g) =
+  (ty,) $
   SqlBuilder $ \input ->
     let_ () input $
       CrossJoin
-        (runSqlBuilder (fromCanonical x <> f) $ LetBound ())
-        (runSqlBuilder (fromCanonical y <> g) $ LetBound ())
+        (runSqlBuilder (fromCanonical x <> snd f) $ LetBound ())
+        (runSqlBuilder (fromCanonical y <> snd g) $ LetBound ())
 sqlAlg _ ForkF{} = error "bad type"
-sqlAlg (Arr _ (enumerate . toFields -> FCopair x y)) InlF =
+sqlAlg ty@(Arr _ (enumerate . toFields -> FCopair x y)) InlF =
+  (ty,) $
   SqlBuilder $ \sql ->
     Comment "inl" $
     Select (toList $ FCopair (fmap (id &&& Just) x) (fmap (, Nothing) y)) sql
 sqlAlg _ InlF = error "bad inl"
-sqlAlg (Arr _ (enumerate . toFields -> FCopair x y)) InrF =
+sqlAlg ty@(Arr _ (enumerate . toFields -> FCopair x y)) InrF =
   let y0 = enumerate y
-   in SqlBuilder $ \sql ->
+   in (ty,) $ SqlBuilder $ \sql ->
         Comment "inr" $
         Select (toList $ FCopair (fmap (, Nothing) x) (zipF y $ fmap Just y0)) sql
 sqlAlg _ InrF = error "bad inr"
-sqlAlg (Arr (enumerate . toFields -> FCopair x y) _) (JoinF f g) =
-  SqlBuilder $ \sql ->
+sqlAlg ty@(Arr (enumerate . toFields -> FCopair x y) _) (JoinF f g) =
+  (ty,) $ SqlBuilder $ \sql ->
     let_ () sql $ Comment "join" $
       Union
-        (runSqlBuilder (f <> toCanonical x) $ Filter (toList x) $ LetBound ())
-        (runSqlBuilder (g <> toCanonical y) $ Filter (toList y) $ LetBound ())
+        (runSqlBuilder (snd f <> toCanonical x) $ Filter (toList x) $ LetBound ())
+        (runSqlBuilder (snd g <> toCanonical y) $ Filter (toList y) $ LetBound ())
 sqlAlg _ JoinF{} = error "bad join"
-sqlAlg _ (PrimF Add) = SqlBuilder $
+sqlAlg ty (PrimF Add) = (ty,) $ SqlBuilder $
   RawSelect "f0 + f1 AS f0" ""
-sqlAlg _ (PrimF Sub) = SqlBuilder $
+sqlAlg ty (PrimF Sub) = (ty,) $ SqlBuilder $
   RawSelect "f0 - f1 AS f0" ""
-sqlAlg _ (PrimF Abs) = SqlBuilder $
+sqlAlg ty (PrimF Abs) = (ty,) $ SqlBuilder $
   \sql ->
     let_ () sql $
       Union
         (RawSelect "abs(f0) as f0, NULL as f1" "f0 < 0" $ LetBound ())
         (RawSelect "NULL as f0, f0 as f1" "f0 >= 0" $ LetBound ())
-
-
-  -- RawSelect "f0 - f1 AS f0" ""
 sqlAlg
-  (Arr
+  ty@(Arr
     (enumerate . toFields -> FPair (FCopair ina inb) inc)
     (enumerate . toFields -> FCopair (FPair outa outc1) (FPair outb outc2))
     ) DistF
-  = SqlBuilder $ \sql ->
+  = (ty,) $ SqlBuilder $ \sql ->
       let_ () sql $ Comment "dist" $
         Union
           (Select
@@ -272,7 +269,7 @@ main = do
   print $ pPrint example
   putStrLn ""
   print $ pPrint $ getSummary exampleS
-  let sql = flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (withCata sqlAlg exampleS) Input
+  let sql = flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (snd $ withCata sqlAlg exampleS) Input
   putStrLn ""
   putStrLn sql
   putStrLn ""
