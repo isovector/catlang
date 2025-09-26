@@ -25,9 +25,11 @@ source-repository head
 
 library
   exposed-modules:
+      Backend.Sql
       Compile
       Eval
       Test
+      Typecheck
       Types
   other-modules:
       Paths_catlang
@@ -48,6 +50,7 @@ library
     , containers
     , mtl
     , pretty
+    , process
     , recursion-schemes
     , syb
     , transformers
@@ -76,6 +79,7 @@ test-suite catlang-test
     , containers
     , mtl
     , pretty
+    , process
     , recursion-schemes
     , syb
     , transformers

@@ -2,6 +2,7 @@
 
 module Backend.Sql where
 
+import System.Process (readProcess)
 import Data.Functor
 import Data.Foldable
 import Control.Monad.State
@@ -153,5 +154,6 @@ sqlAlg (Arr (enumerate . toFields -> FCopair x y) _) (JoinF f g) =
 sqlAlg _ JoinF{} = error "bad join"
 
 
-
+main :: IO String
+main = readProcess "sqlite3" [] $ flip mappend ";" $ show $ prettySql $ runSqlBuilder (withCata sqlAlg exampleS) Input
 
