@@ -182,11 +182,11 @@ infer Proj2 = do
 infer Inl = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
-  pure $ With (Arr t1 (Prod t1 t2)) InlF
+  pure $ With (Arr t1 (Coprod t1 t2)) InlF
 infer Inr = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
-  pure $ With (Arr t2 (Prod t1 t2)) InrF
+  pure $ With (Arr t2 (Coprod t1 t2)) InrF
 infer (Fork x y) = do
   x'@(With (Arr t1 xout) _) <- infer x
   y'@(With (Arr t2 yout) _) <- infer y
