@@ -115,6 +115,8 @@ instance CanUnify Type where
     Coprod <$> mgu x1 x2 <*> mgu' y1 y2
   mgu (Arr x1 y1) (Arr x2 y2) =
     Arr <$> mgu x1 x2 <*> mgu' y1 y2
+  mgu (TyCon x) (TyCon y)
+    | x == y = pure $ TyCon x
   mgu (TyVar x) y = varBind x y
   mgu y (TyVar x) = varBind x y
   mgu x y = fail $ unwords
@@ -164,6 +166,9 @@ unify x y = do
   void $ mgu (subst s x) (subst s y)
   TcM $ gets tcm_subst
 
+
+natTy :: Type
+natTy = TyCon NatTy
 
 infer :: Expr a -> TcM (With (Expr a) Type)
 infer (AndThen x y) = do
@@ -224,6 +229,8 @@ infer (Lit (Char c)) = pure $ With (TyCon CharTy) $ LitF $ Char c
 infer (Lit (Nat n)) = pure $ With (TyCon NatTy) $ LitF $ Nat n
 infer App{} = error "can't infer apps"
 infer Var{} = error "can't infer var"
+infer (Prim Add) =
+  pure $ With (Arr (Prod natTy natTy) natTy) $ PrimF Add
 
 
 subbing :: CanSubst a => a -> TcM a

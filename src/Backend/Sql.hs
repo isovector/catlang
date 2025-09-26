@@ -6,7 +6,7 @@ import System.Process (readProcess)
 import Data.Functor
 import Data.Foldable
 import Control.Monad.State
-import Control.Arrow ((***), (&&&))
+import Control.Arrow ((&&&))
 import Data.Monoid (Endo(..))
 import Typecheck
 import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
@@ -48,22 +48,30 @@ data Sql
   | LetBound
   | CrossJoin Sql Sql
   | Union Sql Sql
+  | RawSelect String Sql
   | Input
   deriving stock (Eq, Ord, Show)
 
 prettySql :: Sql -> Doc
 prettySql (Select fs s) =
-  hsep
+  sep
     [ "SELECT"
     , hsep $ punctuate "," $ do
-        (field, val) <- fs
-        pure $ maybe "NULL" text val <+> "AS" <+> text field
+        (f, val) <- fs
+        pure $ maybe "NULL" text val <+> "AS" <+> text f
     , "FROM"
     , parens $ prettySql s
     ]
+prettySql (RawSelect str sql) =
+  sep
+    [ "SELECT"
+    , text str
+    , "FROM"
+    , parens $ prettySql sql
+    ]
 prettySql (Filter [] s) = prettySql s
 prettySql (Filter ws s) =
-  hsep
+  sep
     [ "SELECT *"
     , "FROM"
     , parens $ prettySql s
@@ -87,9 +95,9 @@ prettySql (CrossJoin x y) =
     ]
 prettySql (Union x y) =
   vcat
-    [ prettySql x
+    [ "SELECT * FROM" <+> parens (prettySql x)
     , "UNION"
-    , prettySql y
+    , "SELECT * FROM" <+> parens (prettySql y)
     ]
 
 newtype SqlBuilder = SqlBuilder
@@ -101,9 +109,6 @@ newtype SqlBuilder = SqlBuilder
 field :: Int -> FieldName
 field i = "f" <> show i
 
-
-example :: Expr ()
-example = AndThen Inr (Join Inr Inl)
 
 exampleS :: With (Expr ()) Type
 Right exampleS = runTcM $ infer example
@@ -152,8 +157,15 @@ sqlAlg (Arr (enumerate . toFields -> FCopair x y) _) (JoinF f g) =
         (runSqlBuilder (f <> toCanonical x) $ Filter (toList x) LetBound)
         (runSqlBuilder (g <> toCanonical y) $ Filter (toList y) LetBound)
 sqlAlg _ JoinF{} = error "bad join"
+sqlAlg _ (PrimF Add) = SqlBuilder $
+  RawSelect "f0 + f1 AS f0"
 
+
+example :: Expr ()
+example = AndThen Inr (Join (AndThen (Fork Id Id) (Prim Add)) Id)
 
 main :: IO String
-main = readProcess "sqlite3" [] $ flip mappend ";" $ show $ prettySql $ runSqlBuilder (withCata sqlAlg exampleS) Input
-
+main = do
+  let sql = flip mappend ";" $ show $ prettySql $ runSqlBuilder (withCata sqlAlg exampleS) Input
+  putStrLn sql
+  readProcess "sqlite3" [] sql

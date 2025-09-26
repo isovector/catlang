@@ -6,7 +6,6 @@
 module Types where
 
 import Data.Char (toUpper)
-import Data.Data
 import Data.Functor.Foldable.TH
 import Data.String
 import Numeric.Natural
@@ -16,6 +15,10 @@ import Text.Read (readMaybe)
 
 instance Pretty Natural where
   pPrint = text . show
+
+
+data Prim = Add
+  deriving stock (Eq, Ord, Show, Read)
 
 
 data Expr a
@@ -33,7 +36,8 @@ data Expr a
   | Dist               -- ^ (a + b) * c ~> a * c + b * c
   | Costrong (Expr a)  -- ^ (a * x ~> b * x) -> (a ~> b)
   | Cochoice (Expr a)  -- ^ (a + x ~> b + x) -> (a ~> b)
-  deriving stock (Eq, Ord, Show, Read, Functor, Foldable, Traversable, Data, Typeable)
+  | Prim Prim
+  deriving stock (Eq, Ord, Show, Read, Functor, Foldable, Traversable)
 
 instance Pretty a => Pretty (Expr a) where
   -- pPrintPrec l p (Index n) =
@@ -75,6 +79,7 @@ instance Pretty a => Pretty (Expr a) where
   pPrintPrec l _ (Cochoice f) =
     parens $
       "cochoice" <+> pPrintPrec l 10 f
+  pPrintPrec _ _ (Prim Add) = "(+)"
 
 instance (IsString a, Read a) => IsString (Expr a) where
   fromString s =
@@ -117,7 +122,7 @@ data LitTy
   = StrTy
   | CharTy
   | NatTy
-  deriving stock (Eq, Ord, Show, Data, Typeable)
+  deriving stock (Eq, Ord, Show)
 
 instance Pretty LitTy where
   pPrint StrTy = "String"
@@ -128,7 +133,7 @@ data Lit
   = Str String
   | Char Char
   | Nat Natural
-  deriving stock (Eq, Ord, Show, Read, Data, Typeable)
+  deriving stock (Eq, Ord, Show, Read)
 
 instance Pretty Lit where
   pPrint (Str s) = pPrint s
@@ -143,7 +148,7 @@ data Stmt a
   = Run (Cmd a)
   | Bind a (Cmd a)
   | More (Stmt a) (Stmt a)
-  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance Pretty a => Pretty (Stmt a) where
   pPrint (Run c) = pPrint c
@@ -155,7 +160,7 @@ instance Pretty a => Pretty (Stmt a) where
 data Cmd a
   = Do (Expr a) [a]
   | Case a (a, Stmt a) (a, Stmt a)
-  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable, Data, Typeable)
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance Pretty a => Pretty (Cmd a) where
   pPrint (Do e as) =
