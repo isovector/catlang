@@ -248,10 +248,24 @@ renameLets =
 
 
 example :: Expr ()
-example = foldr1 AndThen
-  [ Proj2
-  , Prim Abs
-  ]
+example = Cochoice $
+  foldr1 AndThen
+    [ Join Id Id
+    , Fork (foldr1 AndThen
+        [ Fork Id (Lit $ Int 10)
+        , Prim Sub
+        , Prim Abs
+        ]
+        ) Id
+    , Dist
+    , Join (foldr1 AndThen
+        [ Proj2
+        , Fork Id (Lit $ Int 1)
+        , Prim Add
+        , Inr
+        ]
+        ) (AndThen Proj2 Inl)
+    ]
 
 main :: IO ()
 main = do

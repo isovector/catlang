@@ -224,9 +224,16 @@ infer (Costrong f) = do
   f'@(With ty _) <- infer f
   s <- unify ty $ Arr (Prod t1 t3) (Prod t2 t3)
   pure $ With (subst s $ Arr t1 t2) $ CostrongF f'
-infer (Lit (Str s)) = pure $ With (TyCon StrTy) $ LitF $ Str s
-infer (Lit (Char c)) = pure $ With (TyCon CharTy) $ LitF $ Char c
-infer (Lit (Int n)) = pure $ With (TyCon IntTy) $ LitF $ Int n
+infer (Lit (Str s)) = do
+  -- here and in other lits, these are typechecked as are const lit
+  t1 <- fmap TyVar fresh
+  pure $ With (Arr t1 $ TyCon StrTy) $ LitF $ Str s
+infer (Lit (Char c)) = do
+  t1 <- fmap TyVar fresh
+  pure $ With (Arr t1 $ TyCon CharTy) $ LitF $ Char c
+infer (Lit (Int n)) = do
+  t1 <- fmap TyVar fresh
+  pure $ With (Arr t1 $ TyCon IntTy) $ LitF $ Int n
 infer App{} = error "can't infer apps"
 infer Var{} = error "can't infer var"
 infer (Prim Add) =
