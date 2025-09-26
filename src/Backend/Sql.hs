@@ -4,6 +4,7 @@
 
 module Backend.Sql where
 
+import Data.List (sortOn)
 import Unsafe.Coerce
 import System.Process (readProcess)
 import Data.Functor
@@ -28,7 +29,10 @@ data Sql' a
   | Union (Sql' a) (Sql' a)
   | RawSelect String (Sql' a)
   | Input
+  | Comment String (Sql' a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+type Sql = Sql' ()
 
 makeBaseFunctor [''Sql']
 
@@ -60,18 +64,13 @@ enumerate :: Traversable f => f a -> f FieldName
 enumerate = fmap field . flip evalState 0 . traverse (const next)
 
 
-type Sql = Sql' ()
-
-
-
-
 
 prettySql :: Sql' Int -> Doc
 prettySql (Select fs s) =
   sep
     [ "SELECT"
     , hsep $ punctuate "," $ do
-        (f, val) <- fs
+        (f, val) <- sortOn fst fs
         pure $ maybe "NULL" text val <+> "AS" <+> text f
     , "FROM"
     , parens $ prettySql s
@@ -90,29 +89,33 @@ prettySql (Filter ws s) =
     , "FROM"
     , parens $ prettySql s
     , "WHERE"
-    , hsep $ punctuate " AND" $ ws <&> \w -> text w <+> "IS NOT NULL"
+    , sep $ punctuate " AND" $ ws <&> \w -> text w <+> "IS NOT NULL"
     ]
 prettySql (LetBound n) = "t" <> pPrint n
-prettySql Input = "SELECT 1 as f0"
+prettySql Input = "SELECT 1 as f0, 2 as f1"
 prettySql (Let n x y) =
   sep
     [ "WITH" <+> ("t" <> pPrint n) <+> "AS"
     , parens $ prettySql x
-    , prettySql y
+    , hang ("SELECT * FROM") 2 $ parens $ prettySql y
     ]
 prettySql (CrossJoin x y) =
   sep
-    [ "SELECT * FROM"
-    , parens $ prettySql x
+    [ hang ("SELECT * FROM") 2 $ parens $ prettySql x
     , "CROSS JOIN"
     , parens $ prettySql y
     ]
 prettySql (Union x y) =
   sep
-    [ sep ["SELECT *", "FROM" <+> parens (prettySql x) ]
+    [ hang ("SELECT * FROM") 2 $ parens $ prettySql x
     , "UNION"
-    , sep ["SELECT *", "FROM" <+> parens (prettySql y) ]
+    , hang ("SELECT * FROM") 2 $ parens $ prettySql y
     ]
+prettySql (Comment _ y) = prettySql y
+  -- vcat
+  --   [ "--" <+> text x
+  --   , prettySql y
+  --   ]
 
 newtype SqlBuilder = SqlBuilder
   { runSqlBuilder :: Sql -> Sql
@@ -152,27 +155,63 @@ sqlAlg _ Proj2F = error "bad type"
 sqlAlg _ (AndThenF f g) = g <> f
 sqlAlg (Arr _ (enumerate . toFields -> FPair x y)) (ForkF f g) =
   SqlBuilder $ \input ->
-    Let () input $
+    let_ () input $
       CrossJoin
         (runSqlBuilder (fromCanonical x <> f) $ LetBound ())
         (runSqlBuilder (fromCanonical y <> g) $ LetBound ())
 sqlAlg _ ForkF{} = error "bad type"
 sqlAlg (Arr _ (enumerate . toFields -> FCopair x y)) InlF =
-  SqlBuilder $ Select $ toList $ FCopair (fmap (id &&& Just) x) (fmap (, Nothing) y)
+  SqlBuilder $ \sql ->
+    Comment "inl" $
+    Select (toList $ FCopair (fmap (id &&& Just) x) (fmap (, Nothing) y)) sql
 sqlAlg _ InlF = error "bad inl"
 sqlAlg (Arr _ (enumerate . toFields -> FCopair x y)) InrF =
   let y0 = enumerate y
-   in SqlBuilder $ Select $ toList $ FCopair (fmap (, Nothing) x) (zipF y $ fmap Just y0)
+   in SqlBuilder $ \sql ->
+        Comment "inr" $
+        Select (toList $ FCopair (fmap (, Nothing) x) (zipF y $ fmap Just y0)) sql
 sqlAlg _ InrF = error "bad inr"
 sqlAlg (Arr (enumerate . toFields -> FCopair x y) _) (JoinF f g) =
   SqlBuilder $ \sql ->
-    Let () sql $
+    let_ () sql $ Comment "join" $
       Union
         (runSqlBuilder (f <> toCanonical x) $ Filter (toList x) $ LetBound ())
         (runSqlBuilder (g <> toCanonical y) $ Filter (toList y) $ LetBound ())
 sqlAlg _ JoinF{} = error "bad join"
 sqlAlg _ (PrimF Add) = SqlBuilder $
   RawSelect "f0 + f1 AS f0"
+sqlAlg
+  (Arr
+    (enumerate . toFields -> FPair (FCopair ina inb) inc)
+    (enumerate . toFields -> FCopair (FPair outa outc1) (FPair outb outc2))
+    ) DistF
+  = SqlBuilder $ \sql ->
+      let_ () sql $ Comment "dist" $
+        Union
+          (Select
+            ( mconcat
+                [ toList $ zipF outa $ fmap Just ina
+                , toList $ zipF outc1 $ fmap Just inc
+                , toList $ fmap (, Nothing) outb
+                , toList $ fmap (, Nothing) outc2
+                ]
+            )
+            $ Filter (toList ina) $ LetBound ())
+          (Select
+            ( mconcat
+                [ toList $ zipF outb $ fmap Just inb
+                , toList $ zipF outc2 $ fmap Just inc
+                , toList $ fmap (, Nothing) outa
+                , toList $ fmap (, Nothing) outc1
+                ]
+            )
+            $ Filter (toList inb) $ LetBound ())
+sqlAlg _ DistF{} = error "bad dist"
+
+
+let_ :: a -> Sql' a -> Sql' a -> Sql' a
+let_ a (Let b v e1) e2 = Let b v $ let_ a e1 e2
+let_ a e1 e2 = Let a e1 e2
 
 
 -- | Induce a debruijn ordering on the let-binds of a sql. These are carefully
@@ -189,10 +228,23 @@ renameLets =
 
 
 example :: Expr ()
-example = AndThen Inl (Join (AndThen (Fork Id Id) (Prim Add)) Id)
+example = foldr1 AndThen
+  [ Fork (AndThen Proj1 Inl) Proj2
+  , Dist
+  , Join (Prim Add) Proj1
+  ]
 
-main :: IO String
+main :: IO ()
 main = do
+  print $ pPrint example
+  putStrLn ""
+  print $ pPrint $ getSummary exampleS
   let sql = flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (withCata sqlAlg exampleS) Input
+  putStrLn ""
   putStrLn sql
-  readProcess "sqlite3" [] sql
+  putStrLn ""
+  z <- readProcess "sqlite3" [] $ unlines
+    [ ".headers ON"
+    , sql
+    ]
+  putStrLn z

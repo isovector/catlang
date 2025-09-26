@@ -10,6 +10,7 @@ import           Eval
 import           Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 import           Typecheck
 import           Types
+import Backend.Sql
 
 
 newtype Var = V { unVar :: String }
@@ -42,7 +43,8 @@ programs = M.fromList
   , ("simple_branch",) $ AnonArrow "in" $ foldr1 More
       [ Bind "x" $ Do "proj1" ["in"]
       , Bind "y" $ Do "proj2" ["in"]
-      , Run $ Case "x"
+      , Bind "z" $ Do "inr" ["x"]
+      , Run $ Case "z"
           ("a", Run $ Do "id" ["a", "x"])
           ("b", foldr1 More
             [ Bind "z" $ Do "id" ["y"]
@@ -72,7 +74,10 @@ run v val = do
 
   print $ pPrint prog
   putStrLn ""
-  print $ pPrint $ either error getSummary $ runTcM $ infer prog
+
+  let inferred = either error id $ runTcM $ infer prog
+  print $ pPrint $ getSummary inferred
+  writeFile "/tmp/wat" $ flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (withCata sqlAlg inferred) Input
   putStrLn ""
   VFunc f <- pure $ eval prog
   print $ pPrint $ f val
