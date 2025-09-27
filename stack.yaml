@@ -5,6 +5,9 @@ resolver: lts-23.26
 packages:
 - .
 
+extra-deps:
+- catalyst-0.0.0.1
+
 nix:
   packages:
     - sqlite

@@ -29,6 +29,8 @@ dependencies:
 - syb
 - pretty
 - process
+- catalyst
+- template-haskell
 
 default-extensions:
 - DerivingStrategies
