@@ -57,7 +57,7 @@ parseArgs = asum
 data OneOf a = OLeft a | ORight a
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
-buildCase :: Var -> [OneOf (Var, Stmt Var)] -> Parser (Cmd Var)
+buildCase :: Var -> [OneOf (Pat Var, Stmt Var)] -> Parser (Cmd Var)
 buildCase n [OLeft xl, ORight yr] = pure $ Case n xl yr
 buildCase n [ORight yr, OLeft xl] = pure $ Case n xl yr
 buildCase _ err = fail $ show err
@@ -75,7 +75,7 @@ parseCmd = asum
               [ fmap OLeft $ symbol "inl"
               , fmap ORight $ symbol "inr"
               ]
-            b <- parseIdentifier
+            b <- parsePat
             symbol "->"
             pure $ b <$ ctor
   , parseDo
@@ -88,13 +88,27 @@ parseDo = do
   args <- parseArgs
   pure $ Do e args
 
+parsePat :: Parser (Pat Var)
+parsePat = asum
+  [ fmap PVar parseIdentifier
+  , between (symbol "(") (symbol ")") $ PPair <$> (parsePat <* symbol ",") <*> parsePat
+  ]
+
 parseStmt1 :: Parser (Stmt Var)
-parseStmt1 = do
-  mbind <- optional $ try $ parseIdentifier <* symbol "<-"
-  cmd <- parseCmd
-  pure $ case mbind of
-    Just bind -> Bind bind cmd
-    Nothing -> Run cmd
+parseStmt1 = asum
+  [ do
+      symbol "let"
+      p <- parsePat
+      symbol "="
+      args <- parseArgs
+      pure $ Bind p $ Do Id args
+  , do
+      mbind <- optional $ try $ parsePat <* symbol "<-"
+      cmd <- parseCmd
+      pure $ case mbind of
+        Just bind -> Bind bind cmd
+        Nothing -> Run cmd
+  ]
 
 parseStmts :: (a -> Stmt Var -> b) -> Parser a -> Parser b
 parseStmts f ma = asum

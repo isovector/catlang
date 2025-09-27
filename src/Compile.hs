@@ -16,63 +16,87 @@ import           Prelude hiding (lookup)
 import           Types
 
 
-newtype AllocM v a = AllocM { unAllocM :: StateT (Map v (Expr v)) (Writer [Expr v]) a }
-  deriving newtype (Functor, Applicative, Monad)
+data AllocState v = AllocState
+  { as_fresh :: Int
+  , as_lookup :: Map v (Expr v)
+  }
+
+
+newtype AllocM v a = AllocM { unAllocM :: StateT (AllocState v) (Writer [Expr v]) a }
+  deriving newtype (Functor, Applicative, Monad, MonadWriter [Expr v])
   deriving (Semigroup, Monoid) via Ap (AllocM v) a
+
+fresh :: AllocM v v
+fresh = do
+  v <-
+    AllocM $ do
+      r <- gets as_fresh
+      modify $ \as -> as { as_fresh = as_fresh as + 1 }
+      pure r
+  pure $ error "int_to_v" v
 
 
 stackSucc :: AllocM v ()
-stackSucc = AllocM $ modify $ fmap $ AndThen Proj2
+stackSucc = AllocM $ modify $ \as -> as { as_lookup = fmap (AndThen Proj2) $ as_lookup as }
 
 
 alloc :: Ord v => v -> Expr v -> AllocM v ()
 alloc v e = AllocM $ do
   tell $ pure $ Fork e Id
   unAllocM stackSucc
-  modify $ M.insert v Proj1
+  modify $ \as -> as { as_lookup = M.insert v Proj1 $ as_lookup as }
 
 inform :: Ord v => v -> Expr v -> AllocM v ()
-inform v e = AllocM $ modify $ M.insert v e
+inform v e = AllocM $ modify $ \as -> as { as_lookup = M.insert v e $ as_lookup as }
 
 
 
 lookup :: Ord v => v -> AllocM v (Expr v)
-lookup v = AllocM $ gets (M.! v)
+lookup v = AllocM $ gets $ (M.! v) . as_lookup
 
 
 compileStmt
   :: Ord v
   => Set v
   -- ^ binders which need to be allocated, rather than just inlined
-  -> Stmt v -> AllocM v (Expr v)
+  -> Stmt v -> AllocM v ()
 compileStmt allocs (More a b) = compileStmt allocs a >> compileStmt allocs b
-compileStmt allocs (Bind v c) = do
-  e <- compileCmd allocs c
+compileStmt allocs (Bind p c) = do
+  e <- hearMeNow $ compileCmd allocs c
+  bindPat allocs p e
+compileStmt allocs (Run c) = compileCmd allocs c
+
+
+bindPat :: Ord v => Set v -> Pat v -> Expr v -> AllocM v ()
+bindPat allocs (PVar v) e = do
   case S.member v allocs of
     True -> alloc v e
     False -> inform v e
-  lookup v
-compileStmt allocs (Run c) = compileCmd allocs c
+bindPat allocs (PPair a b) e = do
+  bindPat allocs a $ AndThen e Proj1
+  bindPat allocs b $ AndThen e Proj2
 
 
 compileCmd
   :: Ord v
   => Set v
   -- ^ binders which need to be allocated, rather than just inlined
-  -> Cmd v -> AllocM v (Expr v)
+  -> Cmd v -> AllocM v ()
 compileCmd allocs (Case a (x, l) (y, r)) = do
   a' <- lookup a
   l' <-
     isolate $ do
-      stackSucc
-      inform x Proj1
+      -- optimization opportunity: this is already on the stack, so we don't
+      -- actually need to allocate for it.
+      bindPat allocs x Proj1
       compileStmt allocs l
   r' <-
     isolate $ do
-      stackSucc
-      inform y Proj1
+      -- optimization opportunity: this is already on the stack, so we don't
+      -- actually need to allocate for it.
+      bindPat allocs y Proj1
       compileStmt allocs r
-  pure $ foldr1 AndThen
+  tell $ pure $ foldr1 AndThen
     [ Fork a' Id
     , Dist
     , Join l' r'
@@ -80,7 +104,7 @@ compileCmd allocs (Case a (x, l) (y, r)) = do
 compileCmd _ (Do e xs) = do
   xs' <- traverse lookup xs
   let args = foldr1 Fork xs'
-  pure $ AndThen args e
+  tell $ pure $ AndThen args e
 
 
 useCount :: Ord a => Stmt a -> Map a Int
@@ -100,12 +124,12 @@ desugar :: Ord a => TopDecl a -> Expr a
 desugar (AnonArrow input ss) =
   let counts = useCount ss
       needs_alloc = M.keysSet $ M.filter (> 1) counts
-      (out, binds)
+      (_, binds)
         = runWriter
-        $ flip evalStateT (M.singleton input Id)
+        $ flip evalStateT (AllocState 0 $ M.singleton input Id)
         $ unAllocM
         $ compileStmt needs_alloc ss
-  in quotient $ foldr AndThen out binds
+  in quotient $ foldr AndThen Id binds
 
 
 compileProg :: (Functor t, Ord a) => t (TopDecl a) -> t (Expr a)
@@ -120,11 +144,15 @@ quotient = cata \case
   AndThenF (Fork _ g) (Proj2 :. k) -> g :. k
   x -> embed x
 
+hearMeNow :: AllocM v () -> AllocM v (Expr v)
+hearMeNow (AllocM x) = AllocM $ do
+  (_, binds) <- censor (const mempty) $ listen x
+  pure $ foldr AndThen Id binds
 
 -- | Run the action but don't touch the allocation state
-isolate :: AllocM v (Expr v) -> AllocM v (Expr v)
+isolate :: AllocM v () -> AllocM v (Expr v)
 isolate (AllocM x) = AllocM $ do
   s <- get
-  (a, binds) <- censor (const mempty) $ listen x
+  (_, binds) <- censor (const mempty) $ listen x
   put s
-  pure $ foldr AndThen a binds
+  pure $ foldr AndThen Id binds

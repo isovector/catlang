@@ -167,15 +167,29 @@ instance Pretty Lit where
 instance IsString Lit where
   fromString = Str
 
+data Pat a
+  = PVar a
+  | PPair (Pat a) (Pat a)
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
+
+instance Pretty a => Pretty (Pat a) where
+  pPrint (PVar a) = pPrint a
+  pPrint (PPair a b) = parens $ pPrint a <> ("," <+> pPrint b)
+
+instance IsString a => IsString (Pat a) where
+  fromString = PVar . fromString
 
 data Stmt a
   = Run (Cmd a)
-  | Bind a (Cmd a)
+  | Bind (Pat a) (Cmd a)
   | More (Stmt a) (Stmt a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance Pretty a => Pretty (Stmt a) where
   pPrint (Run c) = pPrint c
+  pPrint (Bind a (Do Id args)) =
+    hang ("let" <+> pPrint a <+> "=") 2
+      $ prettyTuple args
   pPrint (Bind a c) =
     hang (pPrint a) 2 $ "<—" <> pPrint c
   pPrint (More a b) = pPrint a $$ pPrint b
@@ -183,7 +197,7 @@ instance Pretty a => Pretty (Stmt a) where
 
 data Cmd a
   = Do (Expr a) [a]
-  | Case a (a, Stmt a) (a, Stmt a)
+  | Case a (Pat a, Stmt a) (Pat a, Stmt a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance Pretty a => Pretty (Cmd a) where
@@ -212,7 +226,7 @@ instance Pretty a => Pretty (TopDecl a) where
     hang (pPrint a <+> "→") 2 $ pPrint b
 
 
-makeBaseFunctor [''Expr, ''Lit, ''Stmt, ''Cmd, ''Type]
+makeBaseFunctor [''Expr, ''Lit, ''Stmt, ''Cmd, ''Type, ''Pat]
 
 deriving stock instance (Show a, Show x) => Show (ExprF a x)
 
