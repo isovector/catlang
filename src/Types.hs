@@ -54,8 +54,7 @@ instance Pretty a => Pretty (Expr a) where
   --     "push" <+> pPrintPrec l 10 f
 
   pPrintPrec l p (Var a) =
-    maybeParens (p >= 10) $
-      "call" <+> pPrintPrec l 10 a
+      "ref:" <> pPrint a
   pPrintPrec l p (Lit pr) = pPrintPrec l p pr
   pPrintPrec l p (App f a) =
     maybeParens (p >= 10) $
