@@ -2,6 +2,7 @@
 
 module Parser where
 
+import Compile
 import qualified Data.Map as M
 import Data.Map (Map)
 import Test (Var(V))
@@ -50,7 +51,7 @@ parseExpr = asum
 parseArgs :: Parser [Var]
 parseArgs = asum
   [ pure <$> parseIdentifier
-  , between (symbol "(") (symbol ")") $ sepBy1 parseIdentifier $ symbol ","
+  , between (symbol "(") (symbol ")") $ sepBy parseIdentifier $ symbol ","
   ]
 
 data OneOf a = OLeft a | ORight a
@@ -119,17 +120,9 @@ parseAnonArrow =
   parseStmts AnonArrow $ parseIdentifier <* symbol "->"
 
 main :: IO ()
-main = putStrLn $
-  either errorBundlePretty (show . pPrint) $
-    parse parseTopBinds "<internal>" $ pack $ unlines
-      [ "foo ="
-      , " input -> "
-      , "  foo <- "
-      , "    case a of"
-      , "      inl x -> id -< x"
-      , "      inr y ->"
-      , "        x <- foo bar baz -< y"
-      , "        x <- id -< y"
-      , "bar = a -> id -< y"
-      ]
+main = do
+  f <- readFile "brainfuck.arr"
 
+  putStrLn $
+    either errorBundlePretty (show . pPrint . compileProg) $
+      parse parseTopBinds "<internal>" $ pack f
