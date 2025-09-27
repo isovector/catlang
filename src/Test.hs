@@ -77,7 +77,6 @@ run v val = do
 
   let inferred = either error id $ runTcM $ infer prog
   print $ pPrint $ getSummary inferred
-  writeFile "/tmp/wat" $ flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (withCata sqlAlg inferred) Input
   putStrLn ""
   VFunc f <- pure $ eval prog
   print $ pPrint $ f val

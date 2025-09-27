@@ -186,6 +186,7 @@ data TopDecl a
   = AnonArrow
       a  -- ^ Input name
       (Stmt a)
+  deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance Pretty a => Pretty (TopDecl a) where
   pPrint (AnonArrow a b) =

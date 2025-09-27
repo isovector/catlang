@@ -26,8 +26,10 @@ source-repository head
 library
   exposed-modules:
       Backend.Sql
+      Backend.TH
       Compile
       Eval
+      Parser
       Test
       Typecheck
       Types
@@ -49,12 +51,15 @@ library
       base >=4.7 && <5
     , catalyst
     , containers
+    , megaparsec
     , mtl
+    , parser-combinators
     , pretty
     , process
     , recursion-schemes
     , syb
     , template-haskell
+    , text
     , transformers
   default-language: GHC2021
 
@@ -80,11 +85,14 @@ test-suite catlang-test
     , catalyst
     , catlang
     , containers
+    , megaparsec
     , mtl
+    , parser-combinators
     , pretty
     , process
     , recursion-schemes
     , syb
     , template-haskell
+    , text
     , transformers
   default-language: GHC2021

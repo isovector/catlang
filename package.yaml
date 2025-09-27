@@ -31,6 +31,9 @@ dependencies:
 - process
 - catalyst
 - template-haskell
+- megaparsec
+- parser-combinators
+- text
 
 default-extensions:
 - DerivingStrategies
