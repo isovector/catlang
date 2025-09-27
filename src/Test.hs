@@ -10,7 +10,6 @@ import           Eval
 import           Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 import           Typecheck
 import           Types
-import Backend.Sql
 
 
 newtype Var = V { unVar :: String }

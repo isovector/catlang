@@ -23,6 +23,26 @@ data Prim
   | Abs -- Int → Int + Int, returning inl (abs) if the input was negative, otherwise inr
   deriving stock (Eq, Ord, Show, Read)
 
+data Type
+  = Prod Type Type
+  | Coprod Type Type
+  | Arr Type Type
+  | TyCon LitTy
+  | TyVar String
+  deriving stock (Eq, Ord, Show)
+
+instance Pretty Type where
+  pPrintPrec l p (Prod x y) =
+    maybeParens (p > 5) $
+      pPrintPrec l 6 x <+> "×" <+> pPrintPrec l 6 y
+  pPrintPrec l p (Coprod x y) =
+    maybeParens (p > 3) $
+      pPrintPrec l 4 x <+> "+" <+> pPrintPrec l 4 y
+  pPrintPrec l p (Arr x y) =
+    maybeParens (p > 0) $
+      pPrintPrec l 1 x <+> "→" <+> pPrintPrec l 0 y
+  pPrintPrec _ _ (TyCon t) = pPrint t
+  pPrintPrec _ _ (TyVar t) = text t
 
 data Expr a
   = Var !a
@@ -53,7 +73,7 @@ instance Pretty a => Pretty (Expr a) where
   --   maybeParens (p >= 10) $
   --     "push" <+> pPrintPrec l 10 f
 
-  pPrintPrec l p (Var a) =
+  pPrintPrec _ _ (Var a) =
       "ref:" <> pPrint a
   pPrintPrec l p (Lit pr) = pPrintPrec l p pr
   pPrintPrec l p (App f a) =
@@ -192,7 +212,7 @@ instance Pretty a => Pretty (TopDecl a) where
     hang (pPrint a <+> "→") 2 $ pPrint b
 
 
-makeBaseFunctor [''Expr, ''Lit, ''Stmt, ''Cmd]
+makeBaseFunctor [''Expr, ''Lit, ''Stmt, ''Cmd, ''Type]
 
 deriving stock instance (Show a, Show x) => Show (ExprF a x)
 

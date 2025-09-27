@@ -1,11 +1,9 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Typecheck where
 
-import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 import Control.Monad
 import Control.Monad.Trans.Except
 import Control.Monad.State
@@ -14,7 +12,6 @@ import Data.Map (Map)
 import Types
 import GHC.Generics
 import Data.Functor.Foldable
-import Data.Functor.Foldable.TH
 
 
 -- | 'With' is a can of paint over 'Cofree'. It associates an @a@ value at
@@ -26,6 +23,7 @@ data With f a = With
   deriving stock (Generic)
 
 
+type Name = String
 
 class Show (Base f x) => ShowBase f x
 instance Show (Base f x) => ShowBase f x
@@ -51,32 +49,6 @@ unsummarize (With _ t) = embed $ fmap unsummarize t
 -- each step.
 withCata :: Recursive t => (x -> Base t a -> a) -> With t x -> a
 withCata f (With x t) = f x $ fmap (withCata f) t
-
-
-type Name = String
-
-data Type
-  = Prod Type Type
-  | Coprod Type Type
-  | Arr Type Type
-  | TyCon LitTy
-  | TyVar Name
-  deriving stock (Eq, Ord, Show, Generic)
-
-makeBaseFunctor [''Type]
-
-instance Pretty Type where
-  pPrintPrec l p (Prod x y) =
-    maybeParens (p > 5) $
-      pPrintPrec l 6 x <+> "×" <+> pPrintPrec l 6 y
-  pPrintPrec l p (Coprod x y) =
-    maybeParens (p > 3) $
-      pPrintPrec l 4 x <+> "+" <+> pPrintPrec l 4 y
-  pPrintPrec l p (Arr x y) =
-    maybeParens (p > 0) $
-      pPrintPrec l 1 x <+> "→" <+> pPrintPrec l 0 y
-  pPrintPrec _ _ (TyCon t) = pPrint t
-  pPrintPrec _ _ (TyVar t) = text t
 
 newtype Subst = Subst { unSubst :: Map Name Type  }
   deriving newtype (Eq, Ord, Show)

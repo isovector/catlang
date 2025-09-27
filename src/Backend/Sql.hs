@@ -6,7 +6,6 @@ module Backend.Sql where
 
 import Data.List (sortOn)
 import Unsafe.Coerce
-import System.Process (readProcess)
 import Data.Functor
 import Data.Functor.Foldable
 import Data.Functor.Foldable.TH
@@ -14,7 +13,6 @@ import Data.Foldable
 import Control.Monad.State
 import Control.Arrow ((&&&))
 import Data.Monoid (Endo(..))
-import Typecheck
 import Text.PrettyPrint.HughesPJClass hiding ((<>), Str)
 import Types
 
@@ -155,7 +153,7 @@ prettySql (Comment x y) =
     [ "--" <+> text x
     , prettySql y
     ]
-prettySql (Recursion a base rec) =
+prettySql (Recursion _a base rec) =
   sep
     [ "WITH RECURSIVE recursion AS"
     , parens $
@@ -178,8 +176,8 @@ field :: Int -> FieldName
 field i = "f" <> show i
 
 
-exampleS :: With (Expr ()) Type
-Right exampleS = runTcM $ infer example
+-- exampleS :: With (Expr ()) Type
+-- Right exampleS = runTcM $ infer example
 
 
 toCanonical :: Fields FieldName -> SqlBuilder
@@ -268,7 +266,7 @@ sqlAlg
 sqlAlg _ DistF{} = error "bad dist"
 sqlAlg ty
   (CochoiceF
-    (Arr (id &&& (enumerate . toFields) -> (Coprod a x, FCopair ain xin))
+    (Arr (Coprod a x)
          (enumerate . toFields -> FCopair bout xout), f)) =
   (ty,) $ SqlBuilder $ \sql ->
     runSqlBuilder (toCanonical bout) $
@@ -324,18 +322,18 @@ example = Cochoice $
         ]
     ]
 
-main :: IO ()
-main = do
-  print $ pPrint example
-  putStrLn ""
-  print $ pPrint $ getSummary exampleS
-  let sql = flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (snd $ withCata sqlAlg exampleS) Input
-  -- putStrLn ""
-  -- putStrLn sql
-  writeFile "/tmp/wat" sql
-  -- putStrLn ""
-  -- z <- readProcess "sqlite3" [] $ unlines
-  --   [ ".headers ON"
-  --   , sql
-  --   ]
-  -- putStrLn z
+-- main :: IO ()
+-- main = do
+--   print $ pPrint example
+--   putStrLn ""
+--   print $ pPrint $ getSummary exampleS
+--   let sql = flip mappend ";" $ show $ prettySql $ renameLets $ runSqlBuilder (snd $ withCata sqlAlg exampleS) Input
+--   -- putStrLn ""
+--   -- putStrLn sql
+--   writeFile "/tmp/wat" sql
+--   -- putStrLn ""
+--   -- z <- readProcess "sqlite3" [] $ unlines
+--   --   [ ".headers ON"
+--   --   , sql
+--   --   ]
+--   -- putStrLn z
