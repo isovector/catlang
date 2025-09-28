@@ -1,6 +1,6 @@
 -- type tape = char * (string * string)
 
--- moveRight : tape -> tape
+moveRight : Char * (String * String) -> Char * (String * String)
 moveRight =
   tape ->
     let (c, (before, after)) = tape
@@ -10,7 +10,6 @@ moveRight =
         c1 <- empty -< c
         before1 <- cons -< (c, before)
         id -< (c1, (before1, after))
-      inr (c1, after1) ->
+      inr (c2, after1) ->
         before1 <- cons -< (c, before)
-        id -< (c1, (before1, after1))
-
+        id -< (c2, (before1, after1))

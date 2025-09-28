@@ -2,10 +2,11 @@
 
 module Parser where
 
+import Control.Monad.Combinators.Expr
 import Compile
 import qualified Data.Map as M
 import Data.Map (Map)
-import Test (Var(V))
+import Test (Var(..))
 import Text.PrettyPrint.HughesPJClass (pPrint)
 import Control.Applicative hiding (some, many)
 import Types
@@ -112,25 +113,48 @@ parseStmts f ma = asum
       pure $ L.IndentSome Nothing (pure . f a . foldr1 More) parseStmt1
   ]
 
-parseTopBind :: Parser (Var, TopDecl Var)
-parseTopBind = L.nonIndented spi $ do
-  x <- parseIdentifier
-  symbol "="
-  y <- parseAnonArrow
-  void $ optional spi
-  pure (x, y)
 
-parseTopBinds :: Parser (Map Var (TopDecl Var))
+
+parseTopBind :: Parser (Var, (Maybe Type, TopDecl Var))
+parseTopBind = do
+  mtype <- optional $ try $ L.nonIndented spi $ do
+      void parseIdentifier
+      symbol ":"
+      parseType
+  L.nonIndented spi $ do
+    x <- parseIdentifier
+    symbol "="
+    y <- parseAnonArrow
+    void $ optional spi
+    pure (x, (mtype, y))
+
+parseTopBinds :: Parser (Map Var (Maybe Type, TopDecl Var))
 parseTopBinds = fmap M.fromList $ many parseTopBind
 
 parseAnonArrow :: Parser (TopDecl Var)
 parseAnonArrow =
   parseStmts AnonArrow $ parseIdentifier <* symbol "->"
 
+parseType :: Parser Type
+parseType =
+  makeExprParser
+    (asum
+      [ between (symbol "(") (symbol ")") parseType
+      , TyCon IntTy <$ symbol "Int"
+      , TyCon StrTy <$ symbol "String"
+      , TyCon CharTy <$ symbol "Char"
+      , fmap (TyVar . unVar) parseIdentifier
+      ])
+    [ [InfixN $ Prod <$ symbol "*"]
+    , [InfixN $ Coprod <$ symbol "+"]
+    , [InfixN $ Arr <$ symbol "->"]
+    ]
+
+
 main :: IO ()
 main = do
   f <- readFile "brainfuck.arr"
 
   putStrLn $
-    either errorBundlePretty (show . pPrint . compileProg) $
+    either errorBundlePretty (show . pPrint . compileAndTypecheckProg) $
       parse parseTopBinds "<internal>" $ pack f

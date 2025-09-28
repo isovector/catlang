@@ -207,7 +207,11 @@ infer (Lit (Int n)) = do
   t1 <- fmap TyVar fresh
   pure $ With (Arr t1 $ TyCon IntTy) $ LitF $ Int n
 infer App{} = error "can't infer apps"
-infer Var{} = error "can't infer var"
+infer (Var v) = do
+  t1 <- fmap TyVar fresh
+  t2 <- fmap TyVar fresh
+  pure $ With (Arr t1 t2) $ VarF v
+
 infer (Prim Add) =
   pure $ With (Arr (Prod intTy intTy) intTy) $ PrimF Add
 infer (Prim Sub) =
@@ -228,3 +232,6 @@ instance (Functor (Base f), CanSubst a) => CanSubst (With f a) where
 
 runTcM :: CanSubst a => TcM a -> Either String a
 runTcM = flip evalState (TcMState mempty 0) . runExceptT . unTcM . (subbing =<<)
+
+runTcM' :: TcM a -> Either String a
+runTcM' = flip evalState (TcMState mempty 0) . runExceptT . unTcM

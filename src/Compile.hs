@@ -3,6 +3,7 @@
 
 module Compile where
 
+import Typecheck
 import           Control.Monad.Trans.State
 import           Control.Monad.Writer
 import           Data.Foldable
@@ -129,6 +130,18 @@ desugar (AnonArrow input ss) =
 
 compileProg :: (Functor t, Ord a) => t (TopDecl a) -> t (Expr a)
 compileProg = fmap desugar
+
+compileAndTypecheckProg
+  :: (Traversable t, Ord a)
+  => t (Maybe Type, TopDecl a)
+  -> Either String (t (Expr a))
+compileAndTypecheckProg = traverse $ \(mty, dec) -> do
+  let e = desugar dec
+  runTcM' $ do
+    exp' <- infer e
+    for_ mty $ unify $ getSummary exp'
+    pure e
+
 
 
 quotient :: Expr a -> Expr a
