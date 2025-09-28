@@ -17,23 +17,13 @@ import           Types
 
 
 data AllocState v = AllocState
-  { as_fresh :: Int
-  , as_lookup :: Map v (Expr v)
+  { as_lookup :: Map v (Expr v)
   }
 
 
 newtype AllocM v a = AllocM { unAllocM :: StateT (AllocState v) (Writer [Expr v]) a }
   deriving newtype (Functor, Applicative, Monad, MonadWriter [Expr v])
   deriving (Semigroup, Monoid) via Ap (AllocM v) a
-
-fresh :: AllocM v v
-fresh = do
-  v <-
-    AllocM $ do
-      r <- gets as_fresh
-      modify $ \as -> as { as_fresh = as_fresh as + 1 }
-      pure r
-  pure $ error "int_to_v" v
 
 
 stackSucc :: AllocM v ()
@@ -103,8 +93,13 @@ compileCmd allocs (Case a (x, l) (y, r)) = do
     ]
 compileCmd _ (Do e xs) = do
   xs' <- traverse lookup xs
-  let args = foldr1 Fork xs'
+  let args = buildPat xs'
   tell $ pure $ AndThen args e
+
+buildPat :: Pat (Expr v) -> Expr v
+buildPat = cata $ \case
+  PVarF p -> p
+  PPairF x y -> Fork x y
 
 
 useCount :: Ord a => Stmt a -> Map a Int
@@ -114,7 +109,7 @@ useCount (Bind _ c) = useCountCmd c
 
 
 useCountCmd :: Ord a => Cmd a -> Map a Int
-useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) x
+useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) $ toList x
 -- TODO(sandy): bug in this case; variable with the same name which get
 -- introduced in the branches get considered together. renaming will fix it
 useCountCmd (Case a (_x, l) (_y, r)) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
@@ -126,7 +121,7 @@ desugar (AnonArrow input ss) =
       needs_alloc = M.keysSet $ M.filter (> 1) counts
       (_, binds)
         = runWriter
-        $ flip evalStateT (AllocState 0 $ M.singleton input Id)
+        $ flip evalStateT (AllocState $ M.singleton input Id)
         $ unAllocM
         $ compileStmt needs_alloc ss
   in quotient $ foldr AndThen Id binds

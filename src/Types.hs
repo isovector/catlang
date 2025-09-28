@@ -189,20 +189,20 @@ instance Pretty a => Pretty (Stmt a) where
   pPrint (Run c) = pPrint c
   pPrint (Bind a (Do Id args)) =
     hang ("let" <+> pPrint a <+> "=") 2
-      $ prettyTuple args
+      $ pPrint args
   pPrint (Bind a c) =
     hang (pPrint a) 2 $ "<—" <> pPrint c
   pPrint (More a b) = pPrint a $$ pPrint b
 
 
 data Cmd a
-  = Do (Expr a) [a]
+  = Do (Expr a) (Pat a)
   | Case a (Pat a, Stmt a) (Pat a, Stmt a)
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
 instance Pretty a => Pretty (Cmd a) where
   pPrint (Do e as) =
-    (pPrint e <> "—<") <+> prettyTuple as
+    (pPrint e <> "—<") <+> pPrint as
   pPrint (Case a (x, l) (y, r)) =
     hang ("case" <+> pPrint a <+> "of") 2 $ vcat
       [ hang ("inl" <+> pPrint x <+> "→") 2 $ pPrint l

@@ -48,12 +48,6 @@ parseExpr = asum
   , fmap (foldl1 App . fmap Var) $ some parseIdentifier
   ]
 
-parseArgs :: Parser [Var]
-parseArgs = asum
-  [ pure <$> parseIdentifier
-  , between (symbol "(") (symbol ")") $ sepBy parseIdentifier $ symbol ","
-  ]
-
 data OneOf a = OLeft a | ORight a
   deriving stock (Eq, Ord, Show, Functor, Foldable, Traversable)
 
@@ -85,7 +79,7 @@ parseDo :: Parser (Cmd Var)
 parseDo = do
   e <- parseExpr
   symbol "-<"
-  args <- parseArgs
+  args <- parsePat
   pure $ Do e args
 
 parsePat :: Parser (Pat Var)
@@ -100,7 +94,7 @@ parseStmt1 = asum
       symbol "let"
       p <- parsePat
       symbol "="
-      args <- parseArgs
+      args <- parsePat
       pure $ Bind p $ Do Id args
   , do
       mbind <- optional $ try $ parsePat <* symbol "<-"

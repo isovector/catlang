@@ -30,37 +30,37 @@ programs :: Map Var (TopDecl Var)
 programs = M.fromList
   [ ("swap",) $
       AnonArrow "in" $ foldr1 More
-        [ Bind "x" $ Do "proj1" ["in"]
-        , Bind "y" $ Do "proj2" ["in"]
-        , Bind "z" $ Do "id" ["in"]
-        , Run $ Do "id" ["y", "x"]
+        [ Bind "x" $ Do "proj1" "in"
+        , Bind "y" $ Do "proj2" "in"
+        , Bind "z" $ Do "id" "in"
+        , Run $ Do "id" $ PPair "y" "x"
         ]
   , ("dup",) $ AnonArrow "in" $ foldr1 More
-      [ Bind "x" $ Do "proj1" ["in"]
-      , Run $ Do "id" ["x", "x"]
+      [ Bind "x" $ Do "proj1" "in"
+      , Run $ Do "id" $ PPair "x" "x"
       ]
   , ("simple_branch",) $ AnonArrow "in" $ foldr1 More
-      [ Bind "x" $ Do "proj1" ["in"]
-      , Bind "y" $ Do "proj2" ["in"]
-      , Bind "z" $ Do "inr" ["x"]
+      [ Bind "x" $ Do "proj1" "in"
+      , Bind "y" $ Do "proj2" "in"
+      , Bind "z" $ Do "inr" "x"
       , Run $ Case "z"
-          ("a", Run $ Do "id" ["a", "x"])
+          ("a", Run $ Do "id" $ PPair "a" "x")
           ("b", foldr1 More
-            [ Bind "z" $ Do "id" ["y"]
-            , Run $ Do "id" ["b", "y"]
+            [ Bind "z" $ Do "id" "y"
+            , Run $ Do "id" $ PPair "b" "y"
             ])
       ]
   , ("branch",) $ AnonArrow "in" $ foldr1 More
-      [ Bind "p" $ Do "inl" ["in"]
+      [ Bind "p" $ Do "inl" "in"
       , Bind "out" $ Case "p"
           ("a", foldr1 More
-              [ Run $ Do "swap" ["a", "a"]
+              [ Run $ Do "swap" $ PPair "a" "a"
               ])
-          ("_", Run $ Do "dup" ["in"])
-      , Bind "z" $ Do "proj1" ["out"]
-      , Bind "w" $ Do "proj2" ["out"]
-      , Bind "zw" $ Do "id" ["w", "z"]
-      , Run $ Do "id" ["out", "zw"]
+          ("_", Run $ Do "dup" "in")
+      , Bind "z" $ Do "proj1" "out"
+      , Bind "w" $ Do "proj2" "out"
+      , Bind "zw" $ Do "id" $ PPair "w" "z"
+      , Run $ Do "id" $ PPair "out" "zw"
       ]
     ]
 
