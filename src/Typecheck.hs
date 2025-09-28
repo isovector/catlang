@@ -1,17 +1,17 @@
-{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Typecheck where
 
 import Control.Monad
-import Control.Monad.Trans.Except
 import Control.Monad.State
-import qualified Data.Map as M
-import Data.Map (Map)
-import Types
-import GHC.Generics
+import Control.Monad.Trans.Except
 import Data.Functor.Foldable
+import Data.Map (Map)
+import Data.Map qualified as M
+import GHC.Generics
+import Types
 
 
 -- | 'With' is a can of paint over 'Cofree'. It associates an @a@ value at
@@ -25,8 +25,10 @@ data With f a = With
 
 type Name = String
 
+
 class Show (Base f x) => ShowBase f x
 instance Show (Base f x) => ShowBase f x
+
 
 deriving stock instance (Show x, forall y. Show y => ShowBase f y) => Show (With f x)
 deriving stock instance Functor (Base f) => Functor (With f)
@@ -50,11 +52,14 @@ unsummarize (With _ t) = embed $ fmap unsummarize t
 withCata :: Recursive t => (x -> Base t a -> a) -> With t x -> a
 withCata f (With x t) = f x $ fmap (withCata f) t
 
-newtype Subst = Subst { unSubst :: Map Name Type  }
+
+newtype Subst = Subst {unSubst :: Map Name Type}
   deriving newtype (Eq, Ord, Show)
+
 
 class CanSubst a where
   subst :: Subst -> a -> a
+
 
 instance CanSubst Type where
   subst (Subst s) = cata $ \case
@@ -62,11 +67,14 @@ instance CanSubst Type where
       | Just t <- M.lookup a s -> t
     x -> embed x
 
+
 instance CanSubst a => CanSubst (Map k a) where
   subst s = fmap (subst s)
 
+
 instance Semigroup Subst where
   Subst t1 <> s@(Subst t2) = Subst $ subst s t1 <> t2
+
 
 instance Monoid Subst where
   mempty = Subst mempty
@@ -75,10 +83,12 @@ instance Monoid Subst where
 class CanUnify a where
   mgu :: a -> a -> TcM a
 
+
 mgu' :: (CanUnify a, CanSubst a) => a -> a -> TcM a
 mgu' x y = do
   s <- TcM $ gets tcm_subst
   mgu (subst s x) (subst s y)
+
 
 instance CanUnify Type where
   mgu (Prod x1 y1) (Prod x2 y2) =
@@ -91,12 +101,15 @@ instance CanUnify Type where
     | x == y = pure $ TyCon x
   mgu (TyVar x) y = varBind x y
   mgu y (TyVar x) = varBind x y
-  mgu x y = fail $ unwords
-    [ "Cannot unify"
-    , show x
-    , "with"
-    , show y
-    ]
+  mgu x y =
+    fail $
+      unwords
+        [ "Cannot unify"
+        , show x
+        , "with"
+        , show y
+        ]
+
 
 varBind :: Name -> Type -> TcM Type
 varBind n v =
@@ -108,8 +121,9 @@ varBind n v =
     --   , show v
     --   ]
     modify $ \s ->
-      s { tcm_subst = mappend (Subst $ M.singleton n v) $ tcm_subst s }
+      s {tcm_subst = mappend (Subst $ M.singleton n v) $ tcm_subst s}
     gets $ (M.! n) . unSubst . tcm_subst
+
 
 data TcMState = TcMState
   { tcm_subst :: Subst
@@ -117,10 +131,11 @@ data TcMState = TcMState
   }
   deriving stock (Eq, Ord, Show)
 
+
 fresh :: TcM Name
 fresh = TcM $ do
   x <- gets tcm_fresh
-  modify $ \s -> s { tcm_fresh = tcm_fresh s + 1 }
+  modify $ \s -> s {tcm_fresh = tcm_fresh s + 1}
   pure $ "$" <> show x
 
 
@@ -141,6 +156,7 @@ unify x y = do
 
 intTy :: Type
 intTy = TyCon IntTy
+
 
 infer :: Expr a -> TcM (With (Expr a) Type)
 infer (AndThen x y) = do
@@ -206,12 +222,11 @@ infer (Lit (Char c)) = do
 infer (Lit (Int n)) = do
   t1 <- fmap TyVar fresh
   pure $ With (Arr t1 $ TyCon IntTy) $ LitF $ Int n
-infer App{} = error "can't infer apps"
+infer App {} = error "can't infer apps"
 infer (Var v) = do
   t1 <- fmap TyVar fresh
   t2 <- fmap TyVar fresh
   pure $ With (Arr t1 t2) $ VarF v
-
 infer (Prim Add) =
   pure $ With (Arr (Prod intTy intTy) intTy) $ PrimF Add
 infer (Prim Sub) =
@@ -232,6 +247,7 @@ instance (Functor (Base f), CanSubst a) => CanSubst (With f a) where
 
 runTcM :: CanSubst a => TcM a -> Either String a
 runTcM = flip evalState (TcMState mempty 0) . runExceptT . unTcM . (subbing =<<)
+
 
 runTcM' :: TcM a -> Either String a
 runTcM' = flip evalState (TcMState mempty 0) . runExceptT . unTcM

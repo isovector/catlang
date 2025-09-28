@@ -1,20 +1,20 @@
-{-# LANGUAGE BlockArguments    #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Compile where
 
+import Control.Monad.Trans.State
+import Control.Monad.Writer
+import Data.Foldable
+import Data.Functor.Foldable
+import Data.Map (Map)
+import Data.Map qualified as M
+import Data.Monoid
+import Data.Set (Set)
+import Data.Set qualified as S
 import Typecheck
-import           Control.Monad.Trans.State
-import           Control.Monad.Writer
-import           Data.Foldable
-import           Data.Functor.Foldable
-import           Data.Map (Map)
-import qualified Data.Map as M
-import           Data.Monoid
-import           Data.Set (Set)
-import qualified Data.Set as S
-import           Prelude hiding (lookup)
-import           Types
+import Types
+import Prelude hiding (lookup)
 
 
 data AllocState v = AllocState
@@ -22,24 +22,24 @@ data AllocState v = AllocState
   }
 
 
-newtype AllocM v a = AllocM { unAllocM :: StateT (AllocState v) (Writer [Expr v]) a }
+newtype AllocM v a = AllocM {unAllocM :: StateT (AllocState v) (Writer [Expr v]) a}
   deriving newtype (Functor, Applicative, Monad, MonadWriter [Expr v])
   deriving (Semigroup, Monoid) via Ap (AllocM v) a
 
 
 stackSucc :: AllocM v ()
-stackSucc = AllocM $ modify $ \as -> as { as_lookup = fmap (AndThen Proj2) $ as_lookup as }
+stackSucc = AllocM $ modify $ \as -> as {as_lookup = fmap (AndThen Proj2) $ as_lookup as}
 
 
 alloc :: Ord v => v -> Expr v -> AllocM v ()
 alloc v e = AllocM $ do
   tell $ pure $ Fork e Id
   unAllocM stackSucc
-  modify $ \as -> as { as_lookup = M.insert v Proj1 $ as_lookup as }
+  modify $ \as -> as {as_lookup = M.insert v Proj1 $ as_lookup as}
+
 
 inform :: Ord v => v -> Expr v -> AllocM v ()
-inform v e = AllocM $ modify $ \as -> as { as_lookup = M.insert v e $ as_lookup as }
-
+inform v e = AllocM $ modify $ \as -> as {as_lookup = M.insert v e $ as_lookup as}
 
 
 lookup :: Ord v => v -> AllocM v (Expr v)
@@ -50,7 +50,8 @@ compileStmt
   :: Ord v
   => Set v
   -- ^ binders which need to be allocated, rather than just inlined
-  -> Stmt v -> AllocM v ()
+  -> Stmt v
+  -> AllocM v ()
 compileStmt allocs (More a b) = compileStmt allocs a >> compileStmt allocs b
 compileStmt allocs (Bind p c) = do
   e <- hearMeNow $ compileCmd allocs c
@@ -72,7 +73,8 @@ compileCmd
   :: Ord v
   => Set v
   -- ^ binders which need to be allocated, rather than just inlined
-  -> Cmd v -> AllocM v ()
+  -> Cmd v
+  -> AllocM v ()
 compileCmd allocs (Case a (x, l) (y, r)) = do
   a' <- lookup a
   l' <-
@@ -87,15 +89,19 @@ compileCmd allocs (Case a (x, l) (y, r)) = do
       -- actually need to allocate for it.
       bindPat allocs y Proj1
       compileStmt allocs r
-  tell $ pure $ foldr1 AndThen
-    [ Fork a' Id
-    , Dist
-    , Join l' r'
-    ]
+  tell $
+    pure $
+      foldr1
+        AndThen
+        [ Fork a' Id
+        , Dist
+        , Join l' r'
+        ]
 compileCmd _ (Do e xs) = do
   xs' <- traverse lookup xs
   let args = buildPat xs'
   tell $ pure $ AndThen args e
+
 
 buildPat :: Pat (Expr v) -> Expr v
 buildPat = cata $ \case
@@ -110,7 +116,7 @@ useCount (Bind _ c) = useCountCmd c
 
 
 useCountCmd :: Ord a => Cmd a -> Map a Int
-useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (, 1) $ toList x
+useCountCmd (Do _ x) = M.fromListWith (+) $ fmap (,1) $ toList x
 -- TODO(sandy): bug in this case; variable with the same name which get
 -- introduced in the branches get considered together. renaming will fix it
 useCountCmd (Case a (_x, l) (_y, r)) = M.unionsWith (+) [M.singleton a 1, useCount l, useCount r]
@@ -120,16 +126,17 @@ desugar :: Ord a => TopDecl a -> Expr a
 desugar (AnonArrow input ss) =
   let counts = useCount ss
       needs_alloc = M.keysSet $ M.filter (> 1) counts
-      (_, binds)
-        = runWriter
-        $ flip evalStateT (AllocState $ M.singleton input Id)
-        $ unAllocM
-        $ compileStmt needs_alloc ss
-  in quotient $ foldr AndThen Id binds
+      (_, binds) =
+        runWriter $
+          flip evalStateT (AllocState $ M.singleton input Id) $
+            unAllocM $
+              compileStmt needs_alloc ss
+   in quotient $ foldr AndThen Id binds
 
 
 compileProg :: (Functor t, Ord a) => t (TopDecl a) -> t (Expr a)
 compileProg = fmap desugar
+
 
 compileAndTypecheckProg
   :: (Traversable t, Ord a)
@@ -143,7 +150,6 @@ compileAndTypecheckProg = traverse $ \(mty, dec) -> do
     pure e
 
 
-
 quotient :: Expr a -> Expr a
 quotient = cata \case
   AndThenF Id x -> x
@@ -152,10 +158,12 @@ quotient = cata \case
   AndThenF (Fork _ g) (Proj2 :. k) -> g :. k
   x -> embed x
 
+
 hearMeNow :: AllocM v () -> AllocM v (Expr v)
 hearMeNow (AllocM x) = AllocM $ do
   (_, binds) <- censor (const mempty) $ listen x
   pure $ foldr AndThen Id binds
+
 
 -- | Run the action but don't touch the allocation state
 isolate :: AllocM v () -> AllocM v (Expr v)

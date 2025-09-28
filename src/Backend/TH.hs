@@ -2,22 +2,25 @@
 
 module Backend.TH where
 
-import Language.Haskell.TH.Syntax
-import Prelude hiding (id, (.))
-import Language.Haskell.TH
 import Control.Category
 import Control.Category.Cartesian
 import Control.Category.Monoidal
 import Control.Category.Recursive
-import Types
 import Data.Functor.Foldable
+import Language.Haskell.TH
+import Language.Haskell.TH.Syntax
+import Types
+import Prelude hiding (id, (.))
+
 
 class (MonoidalProduct k, MonoidalSum k) => Distrib k where
   distribute :: (Either a b, c) `k` Either (a, c) (b, c)
 
+
 instance Distrib (->) where
   distribute (Left a, c) = Left (a, c)
   distribute (Right b, c) = Right (b, c)
+
 
 toCategory :: Expr Name -> Q Exp
 toCategory = cata $ \case
@@ -37,11 +40,11 @@ toCategory = cata $ \case
   LitF (Int x) -> appE (varE 'const) $ lift x
   LitF (Str x) -> appE (varE 'const) $ lift x
   LitF (Char x) -> appE (varE 'const) $ lift x
-  PrimF Add -> [| uncurry (+) |]
-  PrimF Sub -> [| uncurry (-) |]
+  PrimF Add -> [|uncurry (+)|]
+  PrimF Sub -> [|uncurry (-)|]
   PrimF Abs ->
-    [| \x -> case x < 0 of
-         True -> Left (abs x)
-         False -> Right x
-    |]
-
+    [|
+      \x -> case x < 0 of
+        True -> Left (abs x)
+        False -> Right x
+      |]
