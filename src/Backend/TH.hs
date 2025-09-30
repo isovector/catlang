@@ -21,6 +21,12 @@ instance Distrib (->) where
   distribute (Left a, c) = Left (a, c)
   distribute (Right b, c) = Right (b, c)
 
+class IntLits k where
+  intLit :: Int -> k a Int
+  addPrim :: k (Int, Int) Int
+  subPrim :: k (Int, Int) Int
+  absPrim :: k Int (Either Int Int)
+
 
 toCategory :: Expr Name -> Q Exp
 toCategory = cata $ \case
@@ -37,14 +43,9 @@ toCategory = cata $ \case
   DistF -> varE 'distribute
   CostrongF f -> appE (varE 'fixL) f
   CochoiceF f -> appE (varE 'recurseL) f
-  LitF (Int x) -> appE (varE 'const) $ lift x
-  LitF (Str x) -> appE (varE 'const) $ lift x
-  LitF (Char x) -> appE (varE 'const) $ lift x
-  PrimF Add -> [|uncurry (+)|]
-  PrimF Sub -> [|uncurry (-)|]
-  PrimF Abs ->
-    [|
-      \x -> case x < 0 of
-        True -> Left (abs x)
-        False -> Right x
-      |]
+  LitF (Int x) -> appE (varE 'intLit) $ lift x
+  LitF (Str x) -> [| str_lit $(lift x) |]
+  LitF (Char x) -> [| char_lit $(lift x) |]
+  PrimF Add -> varE 'addPrim
+  PrimF Sub -> varE 'subPrim
+  PrimF Abs -> varE 'absPrim

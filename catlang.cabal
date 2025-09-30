@@ -25,6 +25,7 @@ source-repository head
 
 library
   exposed-modules:
+      Backend.Dot
       Backend.Sql
       Backend.TH
       Compile
@@ -52,6 +53,7 @@ library
     , catalyst
     , containers
     , megaparsec
+    , monoidal-containers
     , mtl
     , parser-combinators
     , pretty
@@ -86,6 +88,7 @@ test-suite catlang-test
     , catlang
     , containers
     , megaparsec
+    , monoidal-containers
     , mtl
     , parser-combinators
     , pretty
